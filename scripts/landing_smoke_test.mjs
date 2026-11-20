@@ -11,28 +11,49 @@ try {
   page.on("console", message => {
     if (message.type() === "error") errors.push(message.text());
   });
+  page.on("requestfailed", request => errors.push(`Request failed: ${request.url()}`));
+  page.on("response", response => {
+    if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`);
+  });
 
   const response = await page.goto(base, { waitUntil: "networkidle" });
   assert.equal(response.status(), 200);
   assert.match(await page.title(), /BINO/);
   assert.match(await page.locator("footer").innerText(), /June 2026.*Nabil ES-SAADI/s);
   assert.match(await page.locator("footer").innerText(), /Capgemini competition/);
+  assert.match(await page.locator("#project").innerText(),
+    /I made this simulator for our BINO project for the Capgemini competition\./);
+  for (const selector of ['link[rel="canonical"]', 'meta[name="description"]', 'meta[property="og:image"]',
+    'meta[property="og:image:alt"]', 'meta[name="twitter:card"]', 'link[rel="icon"]']) {
+    assert.equal(await page.locator(selector).count(), 1, `Missing ${selector}`);
+  }
 
-  for (const width of [320, 390, 768, 1440]) {
+  for (const width of [320, 390, 768, 1440, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     const state = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       imageLoaded: document.querySelector(".hero-visual img").naturalWidth > 0,
       simulatorLoaded: performance.getEntriesByType("resource")
         .some(resource => /\/models\/|\/assets\/simulator-|\/src\/main\.ts/.test(resource.name)),
+      defaultsLabelVisible: (() => {
+        const note = document.querySelector(".scenario-strip > p");
+        return !!note && note.offsetHeight > 0 && /not performance results/.test(note.textContent);
+      })(),
+      smallTargets: [...document.querySelectorAll("main a, footer a, header a")]
+        .filter(link => link.offsetParent && link.getBoundingClientRect().height < 40)
+        .map(link => link.textContent.trim()),
     }));
+    assert.ok(state.defaultsLabelVisible, `Default-values disclaimer hidden at ${width}px`);
+    assert.deepEqual(state.smallTargets, [], `Links under 40px tall at ${width}px`);
     assert.ok(state.scrollWidth <= width, `Horizontal overflow at ${width}px`);
     assert.ok(state.imageLoaded, "Preview image did not load");
     assert.equal(state.simulatorLoaded, false, "Homepage loaded simulator resources");
     console.log(`PASS homepage at ${width}px: no overflow, image loaded, simulator deferred`);
+    if (width === 320) await page.screenshot({ path: "scripts/landing-320.png", fullPage: true });
     if (width === 390) await page.screenshot({ path: "scripts/landing-mobile.png", fullPage: true });
+    if (width === 768) await page.screenshot({ path: "scripts/landing-tablet.png", fullPage: true });
+    if (width === 1440) await page.screenshot({ path: "scripts/landing-desktop.png", fullPage: true });
   }
-  await page.screenshot({ path: "scripts/landing-desktop.png", fullPage: true });
 
   const brokenAnchors = await page.locator('a[href^="#"]').evaluateAll(links =>
     links.filter(link => !document.querySelector(link.getAttribute("href")))
@@ -49,7 +70,10 @@ try {
   await page.waitForFunction(() => document.querySelector(".status-bar")?.textContent?.includes("Loaded STEP"));
   console.log("PASS simulator launch, direct refresh, and CAD reference loading");
 
-  await page.getByRole("link", { name: "BINO project home" }).click();
+  const homeLink = page.getByRole("link", { name: "BINO project home" });
+  assert.ok(await homeLink.isVisible(), "Simulator home link is not visible");
+  assert.match(await homeLink.innerText(), /Home/);
+  await homeLink.click();
   await page.getByRole("link", { name: "Run the jury demo", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#cmd-toggle-lbl")?.textContent === "Pause"
     && document.querySelector(".comp-kpi-val")?.textContent !== "0/0");

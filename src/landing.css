@@ -34,7 +34,7 @@ a:focus-visible {
 p {
   line-height: 1.75;
 }
-h1,h2,h3,p,figure,dl,dd {
+h1,h2,h3,p,figure,dl,dd,blockquote {
   margin: 0;
 }
 .wrap {
@@ -65,6 +65,7 @@ h1,h2,h3,p,figure,dl,dd {
 .wordmark {
   display: flex;
   align-items: center;
+  min-height: 44px;
   gap: 13px;
   font-weight: 850;
   font-size: 30px;
@@ -98,6 +99,11 @@ h1,h2,h3,p,figure,dl,dd {
   gap: 34px;
   font-size: 14px;
   color: #b9c7d0;
+}
+.site-header nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 .site-header nav a:hover,.text-link:hover {
   color: var(--accent);
@@ -144,6 +150,9 @@ h1,h2,h3,p,figure,dl,dd {
   background: #29434d;
 }
 .text-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   font-size: 14px;
   font-weight: 600;
   text-decoration: underline;
@@ -230,6 +239,9 @@ h1,h2,h3,p,figure,dl,dd {
   border-top: 1px solid #334450;
 }
 .hero-visual figcaption a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: var(--accent);
   white-space: nowrap;
 }
@@ -398,6 +410,12 @@ h2 span {
   margin-bottom: 24px;
 }
 .project-story .project-lead {
+  margin-bottom: 24px;
+  padding-left: 22px;
+  border-left: 2px solid var(--accent);
+}
+.project-story .project-lead p {
+  margin: 0;
   color: #f4f7f8;
   font-size: 25px;
   font-weight: 450;
@@ -424,6 +442,10 @@ h2 span {
   border-top: 1px solid var(--line);
 }
 .footer-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
   font-weight: 750;
   font-size: 19px;
 }
@@ -435,6 +457,10 @@ h2 span {
 .site-footer p {
   color: #94a7b5;
   font-size: 12px;
+}
+.footer-name,.site-footer>.text-link {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .site-footer>.text-link {
   font-size: 13px;
@@ -473,6 +499,9 @@ h2 span {
     max-width: none;
   }
   .scenario-strip>p {
+    flex-basis: 100%;
+  }
+  .scenario-strip>p br {
     display: none;
   }
   .approach,.experience-inner,.project {
@@ -620,8 +649,11 @@ h2 span {
   .run-sequence:before {
     bottom: 90px;
   }
-  .project-story .project-lead {
-    font-size: 24px;
+  .project-story .project-lead p {
+    font-size: 22px;
+  }
+  .scenario-strip>p {
+    margin-top: 20px;
   }
   .site-footer {
     align-items: flex-start;

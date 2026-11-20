@@ -26,13 +26,14 @@ const app = document.querySelector<HTMLDivElement>("#root")!;
 app.innerHTML = `
   <div class="app-shell">
     <header class="command-bar">
-      <a class="brand" href="/" title="Back to BINO project home" aria-label="BINO project home">
-        <span class="brand-mark">◆</span>
+      <a class="home-link" href="/" title="Back to the BINO project homepage" aria-label="BINO project home"><span aria-hidden="true">←</span> Home</a>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◆</span>
         <div class="brand-text">
-          <span class="brand-name">Warehouse Swarm Lab</span>
+          <span class="brand-name">BINO · Swarm Lab</span>
           <span class="brand-sub" id="cmd-scenario"></span>
         </div>
-      </a>
+      </div>
       <div class="cmd-cluster cmd-sim">
         <button class="cmd-btn cmd-primary" data-cmd="toggle"><span class="cmd-ico" id="cmd-toggle-ico">▶</span><span id="cmd-toggle-lbl">Start</span></button>
         <button class="cmd-btn" data-cmd="step" title="Advance one tick">⏭ Step</button>

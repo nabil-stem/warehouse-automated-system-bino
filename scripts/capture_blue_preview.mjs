@@ -4,7 +4,7 @@ import path from "node:path";
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1600, height: 950 }, deviceScaleFactor: 1 });
 
-await page.goto("http://127.0.0.1:5173/simulator/", { waitUntil: "domcontentloaded" });
+await page.goto(process.env.PREVIEW_URL || "http://127.0.0.1:5173/simulator/", { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(1200);
 
 await page.getByRole("button", { name: "Missions" }).click();
