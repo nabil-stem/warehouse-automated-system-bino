@@ -1,0 +1,10 @@
+.claude/
+docs/
+promo/
+scripts/
+smoke-build/
+smoke-build-cjs/
+ui-redesign-brief/
+*_PROMPT.md
+*_CONTEXT.md
+text-to-cad-prompt.md

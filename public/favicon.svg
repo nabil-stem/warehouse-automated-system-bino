@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Warehouse Swarm Lab">
+  <rect width="64" height="64" rx="14" fill="#080c10"/>
+  <path d="M12 44h40v8H12z" fill="#17202a" stroke="#37d8c2" stroke-width="2"/>
+  <path d="M15 17h34v20H15z" fill="#f5b942"/>
+  <path d="M19 21h8v5h-8zm12 0h8v5h-8zm-12 8h8v5h-8zm12 0h8v5h-8zm12-8h3v13h-3z" fill="#1d2935"/>
+  <path d="M12 16h40M12 27h40M12 38h40" stroke="#4ea3ff" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="21" cy="48" r="3" fill="#4ea3ff"/>
+  <circle cx="43" cy="48" r="3" fill="#4ea3ff"/>
+  <path d="M32 8l7 7-7 7-7-7z" fill="#37d8c2"/>
+</svg>
