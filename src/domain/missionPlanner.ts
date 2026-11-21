@@ -184,7 +184,7 @@ export function assignMissionToRobot(
   tick?: number
 ): { ok: true } | { ok: false; reason: string } {
   if (!isRobotAssignable(robot)) return { ok: false, reason: `Robot ${robot.id} is not available` };
-  if (robot.batteryMinutes <= 5) return { ok: false, reason: `Robot ${robot.id} battery is too low` };
+  if (robot.batteryMinutes <= assignmentBatteryFloor(scenario)) return { ok: false, reason: `Robot ${robot.id} battery is too low` };
   if (mission.type !== "move-to-point" && isSourceSlotReserved(activeMissions, mission.sourceSlotId, mission.id)) {
     mission.statusNote = "Source slot reserved by another active mission";
     return { ok: false, reason: `Source slot ${mission.sourceSlotId} is already reserved` };
@@ -222,7 +222,7 @@ export function assignMissions(
   tick?: number
 ) {
   const queued = missions.filter(m => m.status === "queued");
-  const assignable = robots.filter(r => isRobotAssignable(r) && r.batteryMinutes > 5);
+  const assignable = robots.filter(r => isRobotAssignable(r) && r.batteryMinutes > assignmentBatteryFloor(scenario));
   if (queued.length === 0 || assignable.length === 0) return;
   const activeMissionLimit = resolveActiveMissionLimit(missions, robots, maxActiveMissions, scenario);
 
@@ -230,12 +230,15 @@ export function assignMissions(
     m => m.status === "assigned" || m.status === "moving" || m.status === "picking" || m.status === "placing"
   ).length;
 
+  // Missions in flight per target station. Every active phase counts (the old filter
+  // skipped "picking", so the cap leaked), except round-trip return legs, which have
+  // already left the station.
   const stationLoad = new Map<string, number>();
   if (stations) {
     for (const station of stations) {
       const current = missions.filter(
-        m => m.targetStationId === station.id &&
-        (m.status === "assigned" || m.status === "moving" || m.status === "placing")
+        m => m.targetStationId === station.id && !m.returnLeg &&
+        (m.status === "assigned" || m.status === "moving" || m.status === "picking" || m.status === "placing")
       ).length;
       stationLoad.set(station.id, current);
     }
@@ -252,8 +255,9 @@ export function assignMissions(
     if (stations) {
       const station = stations.find(s => s.id === mission.targetStationId);
       if (station) {
+        // One robot at the dock plus a full queue behind it.
         const currentLoad = stationLoad.get(station.id) ?? 0;
-        if (currentLoad >= station.queueCapacity) {
+        if (currentLoad >= station.queueCapacity + 1) {
           continue;
         }
       }
@@ -339,6 +343,18 @@ export function resolveActiveMissionLimit(
     safeConfiguredLimit,
     Math.min(robotCeiling, stationCeiling, fleetRampCeiling, demandRamp)
   );
+}
+
+/**
+ * Minimum battery to accept new work. With a charger present this is the low-battery
+ * threshold itself: a robot that is already due for charging must go charge instead of
+ * being handed another mission (assignment runs before the tick that would send it to
+ * the charger, so a lower floor let busy fleets starve robots of charge indefinitely).
+ * Without a charger there is nowhere to recharge, so only a hard floor applies.
+ */
+export function assignmentBatteryFloor(scenario?: WarehouseScenario): number {
+  const hasCharger = scenario?.stations.some(station => station.type === "charging") ?? false;
+  return hasCharger ? Math.max(5, scenario?.simulation.lowBatteryThreshold ?? 15) : 5;
 }
 
 function isRobotAssignable(robot: RobotRuntime): boolean {

@@ -1,4 +1,4 @@
-import type { RobotRuntime, Mission, Slot, WarehouseScenario, NavGraph, Vec2, StationQueueState, RobotState, TrafficEvent, AisleLaneConfig, PhysicalQueueSlot, SupervisorDecision, SupervisorCommand, ParkingBayInfo, ParkingReassignment, ParkingStrategy, CollisionState, LaunchDecision, StartupDispatchStats, MissionAnalysisRecord } from "./schema";
+import type { StationConfig, RobotRuntime, Mission, Slot, WarehouseScenario, NavGraph, Vec2, StationQueueState, RobotState, TrafficEvent, AisleLaneConfig, PhysicalQueueSlot, SupervisorDecision, SupervisorCommand, ParkingBayInfo, ParkingReassignment, ParkingStrategy, CollisionState, LaunchDecision, StartupDispatchStats, MissionAnalysisRecord } from "./schema";
 import { pathToPoint, pathToSlot, pathToStation, findNearestNodeId, aStar, pathToSlotPredictive, pathToStationPredictive, pathToPointPredictive, type CongestionContext } from "./navigationGraph";
 import { buildSolidObstacles, isClearSegment, pointInsideSolid, robotRadius, stationApproachPosition, type SolidRect } from "./obstacles";
 import { computeWarehouseExtents } from "./warehouseGenerator";
@@ -28,6 +28,52 @@ const YIELD_BLOCKED_TICKS = 12;
 const YIELD_WAIT_TICKS = 18;
 const MAX_CONSECUTIVE_YIELDS = 3;
 const NEXT_MISSION_DWELL_TICKS = 35;
+
+/**
+ * Dwell after finishing a mission while work is still queued. The allocator runs every
+ * tick, so a robot that can be chained is chained on the very next tick; a long dwell
+ * only parks an idle robot on a station dock (blocking the next delivery) or in an aisle.
+ * Robots standing in a station's approach/queue area therefore get a single tick, others
+ * keep a short pause so they do not start back and immediately turn around.
+ */
+function nextMissionDwellTicks(robot: RobotRuntime, scenario: WarehouseScenario): number {
+  return isStationTrafficKeepout(robot.position, scenario) ? 1 : Math.min(NEXT_MISSION_DWELL_TICKS, 10);
+}
+/** Docking is only declared once the robot is physically on its bay (numerical settle). */
+const DOCK_SETTLE_EPS = 0.02;
+/** Free travel (metres) on its own route after which a robot's yield streak is forgiven. */
+const YIELD_STREAK_DECAY_METERS = 3;
+/** Maximum retreat length of a physical "reverse one step" recovery move. */
+const MAX_RETREAT_METERS = 2.0;
+/** Search radius (path metres) of the graph-based yield escape planner. */
+const YIELD_ESCAPE_MAX_METERS = 22;
+
+/** Navigation graph of the current tick, used by recovery planners deep in the resolver stack. */
+let activeGraph: NavGraph | undefined;
+/**
+ * Robots that will not move soon, for every planner of this tick (all routing modes).
+ * Short direct hops must not be planned through them; see navigationGraph.routeVia.
+ */
+let tickAvoid: { points: Vec2[]; radius: number } | undefined;
+/** Tick currently being simulated (for rate limits inside helpers without a tick argument). */
+let currentTick = 0;
+/** Last tick a yield-escape plan failed per robot: failed searches are not retried every tick. */
+let escapeFailedAt = new Map<number, number>();
+const ESCAPE_RETRY_TICKS = 8;
+
+/**
+ * Station approach points, cached per tick. Computing one rebuilds every solid obstacle,
+ * and keep-out checks ask for them inside tight candidate loops.
+ */
+let approachCache = new Map<StationConfig, Vec2>();
+function approachOf(station: StationConfig, scenario: WarehouseScenario): Vec2 {
+  let approach = approachCache.get(station);
+  if (!approach) {
+    approach = stationApproachPosition(station, scenario);
+    approachCache.set(station, approach);
+  }
+  return approach;
+}
 
 /**
  * Startup dispatch control. When a mission batch starts, many robots want to leave the
@@ -334,6 +380,7 @@ function enforceHomeParkingTargets(robots: RobotRuntime[], scenario: WarehouseSc
 export function initRobots(scenario: WarehouseScenario): RobotRuntime[] {
   const robots: RobotRuntime[] = [];
   const count = scenario.robots.count;
+  approachCache = new Map();
   const parkingPositions = buildParkingPositions(scenario, count);
 
   deadlocksDetected = 0;
@@ -359,6 +406,10 @@ export function initRobots(scenario: WarehouseScenario): RobotRuntime[] {
   launchHeldNow = 0;
   launchClearedInZoneNow = 0;
   missionAnalysis = [];
+  escapeFailedAt = new Map();
+  approachCache = new Map();
+  chargerQueue = [];
+  chargerGrantRobotId = undefined;
 
   const allParkingPositions = buildParkingPositions(scenario, Math.max(count + 24, count * 4));
   parkingBayRegistry = allParkingPositions.map((pos, i) => ({
@@ -415,6 +466,14 @@ export function tickRobots(
   collisionAvoidance: boolean,
   _tick: number
 ) {
+  activeGraph = graph;
+  currentTick = _tick;
+  tickAvoid = {
+    points: stationaryObstacles(robots, undefined),
+    radius: robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12),
+  };
+  const tickStartPositions = new Map(robots.map(r => [r.id, { ...r.position }]));
+  approachCache = new Map();
   const solids = buildSolidObstacles(scenario);
   const reservations = collisionAvoidance ? buildReservationContext(robots, scenario) : undefined;
   const parkingOnlyMode = isCompletedMissionWaveParkingMode(robots, missions);
@@ -422,7 +481,7 @@ export function tickRobots(
   updateStationQueues(scenario, robots, missions);
 
   const usePredictive = collisionAvoidance && scenario.simulation.routing === "reservation-table";
-  const congestionCtx = usePredictive ? buildCongestionContextForTick(congestionMap, scenario) : undefined;
+  const congestionCtx = usePredictive ? buildCongestionContextForTick(congestionMap, scenario, robots) : undefined;
 
   enforceHomeParkingTargets(robots, scenario);
 
@@ -452,6 +511,7 @@ export function tickRobots(
 
   const chargingStation = scenario.stations.find(s => s.type === "charging");
   const lowBatteryThreshold = scenario.simulation.lowBatteryThreshold ?? 15;
+  updateChargerAccess(robots, scenario, chargingStation);
   const pickPlaceTimePerLevel = scenario.simulation.pickPlaceTimePerLevel ?? 3;
 
   for (const robot of robots) {
@@ -464,6 +524,17 @@ export function tickRobots(
         robot.currentSpeedMps = 0;
         continue;
       }
+      // Low battery takes precedence over re-homing: drive straight to the charger
+      // queue instead of first parking and then crossing the warehouse again.
+      if (
+        chargingStation &&
+        robot.batteryMinutes < lowBatteryThreshold &&
+        !robot.missionId &&
+        chargerHasRoom(robot, robots)
+      ) {
+        beginChargeTrip(robot);
+        continue;
+      }
       if (
         (shouldReturnIdleRobotHome(missions) || !validParking) &&
         !robot.missionId &&
@@ -474,28 +545,42 @@ export function tickRobots(
         startReturnToStandby(robot, robots, scenario, graph, usePredictive ? congestionCtx : undefined, _tick);
         continue;
       }
-      if (chargingStation && robot.batteryMinutes < lowBatteryThreshold) {
-        robot.state = "to-charge";
-        clearRobotRouteReservations(robot.id);
-        robot.path = usePredictive && congestionCtx
-          ? pathToStationPredictive(graph, robot.position, chargingStation, congestionCtx)
-          : pathToStation(graph, robot.position, chargingStation);
-        robot.pathIndex = 0;
-        registerRouteReservations(robot, robot.path, _tick, scenario);
-      }
       continue;
     }
 
     if (robot.state === "to-charge") {
-      if (robot.path.length === 0 && chargingStation) {
-        clearRobotRouteReservations(robot.id);
-        robot.path = usePredictive && congestionCtx
-          ? pathToStationPredictive(graph, robot.position, chargingStation, congestionCtx)
-          : pathToStation(graph, robot.position, chargingStation);
-        robot.pathIndex = 0;
-        registerRouteReservations(robot, robot.path, _tick, scenario);
+      if (!chargingStation) {
+        robot.state = "idle";
+        robot.path = [];
+        continue;
       }
-      if (moveAlongPath(robot, robots, scenario, solids, collisionAvoidance, congestionMap, undefined, reservations)) {
+      // Charger access protocol: only the granted robot drives onto the dock; the rest
+      // wait FIFO in the marked charger queue slots (no convergence on one point).
+      const dock = approachOf(chargingStation, scenario);
+      const target = chargerTargetFor(robot, dock);
+      const atTarget = target !== undefined && distance(robot.position, target) <= 0.05;
+      if (target && !atTarget) {
+        const end = robot.path[robot.path.length - 1];
+        const onRoute = robot.pathIndex < robot.path.length && end !== undefined && distance(end, target) <= 0.05;
+        if (!onRoute) {
+          clearRobotRouteReservations(robot.id);
+          const isDock = distance(target, dock) <= 0.05;
+          robot.path = isDock
+            ? (usePredictive && congestionCtx
+              ? pathToStationPredictive(graph, robot.position, chargingStation, congestionCtx)
+              : pathToStation(graph, robot.position, chargingStation, tickAvoid))
+            : (usePredictive && congestionCtx
+              ? pathToPointPredictive(graph, robot.position, target, congestionCtx)
+              : pathToPoint(graph, robot.position, target, tickAvoid));
+          robot.pathIndex = 0;
+          registerRouteReservations(robot, robot.path, _tick, scenario);
+        }
+        moveAlongPath(robot, robots, scenario, solids, collisionAvoidance, congestionMap, undefined, reservations);
+      } else {
+        robot.currentSpeedMps = 0;
+        if (target) robot.totalWaitTicks++;
+      }
+      if (chargerGrantRobotId === robot.id && distance(robot.position, dock) <= 0.05) {
         robot.state = "charging";
         robot.waitTicks = 300;
         robot.path = [];
@@ -560,6 +645,12 @@ export function tickRobots(
     }
 
     if (robot.state === "returning") {
+      if (chargingStation && robot.batteryMinutes < lowBatteryThreshold && chargerHasRoom(robot, robots)) {
+        releaseParkingBay(robot);
+        beginChargeTrip(robot);
+        robot.batteryMinutes = Math.max(0, robot.batteryMinutes - scenario.simulation.tickMs / 60000);
+        continue;
+      }
       if (!parkingOnlyMode && isReturningRobotBlockingStationExit(robot, robots, scenario, missions)) {
         const yieldResult = yieldReturningRobotFromStation(robot, robots, scenario, missions, congestionMap, solids, _tick);
         if (yieldResult) {
@@ -607,9 +698,10 @@ export function tickRobots(
         const target = parkingTarget(robot);
         const distanceParking = distance(robot.position, target);
         if (distanceParking <= standbyArrivalTolerance(scenario)) {
-          dockRobotAtParkingTarget(robot, scenario, "docked-at-parking-target");
-          clearRobotRouteReservations(robot.id);
-          updateBayStateForRobot(robot, "occupied");
+          if (dockRobotAtParkingTarget(robot, scenario, "docked-at-parking-target")) {
+            clearRobotRouteReservations(robot.id);
+            updateBayStateForRobot(robot, "occupied");
+          }
         } else {
           const oldBayId = robot.assignedParkingBayId;
           if (canDynamicallyReassignParking(scenario)) {
@@ -698,7 +790,7 @@ export function tickRobots(
       clearRobotRouteReservations(robot.id);
       robot.path = usePredictive && congestionCtx
         ? pathToPointPredictive(graph, robot.position, target, congestionCtx)
-        : pathToPoint(graph, robot.position, target);
+        : pathToPoint(graph, robot.position, target, tickAvoid);
       robot.pathIndex = 0;
       registerRouteReservations(robot, robot.path, _tick, scenario);
       mission.status = "moving";
@@ -753,7 +845,7 @@ export function tickRobots(
             clearRobotRouteReservations(robot.id);
             robot.path = usePredictive && congestionCtx
               ? pathToPointPredictive(graph, robot.position, availSlot.position, congestionCtx)
-              : pathToPoint(graph, robot.position, availSlot.position);
+              : pathToPoint(graph, robot.position, availSlot.position, tickAvoid);
             robot.pathIndex = 0;
             registerRouteReservations(robot, robot.path, _tick, scenario);
             mission.statusNote = `Routing to queue slot ${availSlot.id}`;
@@ -773,7 +865,7 @@ export function tickRobots(
       clearRobotRouteReservations(robot.id);
       robot.path = usePredictive && congestionCtx
         ? pathToStationPredictive(graph, robot.position, station, congestionCtx)
-        : pathToStation(graph, robot.position, station);
+        : pathToStation(graph, robot.position, station, tickAvoid);
       robot.pathIndex = 0;
       registerRouteReservations(robot, robot.path, _tick, scenario);
       mission.status = "moving";
@@ -873,7 +965,7 @@ export function tickRobots(
             robot.state = "idle";
             robot.path = [];
             robot.pathIndex = 0;
-            robot.waitTicks = NEXT_MISSION_DWELL_TICKS;
+            robot.waitTicks = nextMissionDwellTicks(robot, scenario);
             robot.blockedTicks = 0;
             robot.currentSpeedMps = 0;
           }
@@ -933,7 +1025,7 @@ export function tickRobots(
             robot.state = "idle";
             robot.path = [];
             robot.pathIndex = 0;
-            robot.waitTicks = NEXT_MISSION_DWELL_TICKS;
+            robot.waitTicks = nextMissionDwellTicks(robot, scenario);
             robot.blockedTicks = 0;
             robot.currentSpeedMps = 0;
           }
@@ -946,10 +1038,93 @@ export function tickRobots(
   }
 
   enforceExactHomeDockingWhenComplete(robots, missions, scenario, graph, solids, usePredictive ? congestionCtx : undefined, _tick);
+  if (collisionAvoidance) runProgressWatchdog(robots, scenario, missions, congestionMap, solids, _tick, tickStartPositions);
   detectPhysicalCollisions(robots, scenario, _tick);
   updateCollisionStates(robots, scenario);
 
   recordTick(robots, missions, _tick);
+}
+
+/**
+ * Charger access protocol.
+ *
+ * A charger has a single physical dock (its approach point). Robots that need charge form
+ * a FIFO queue (ordered by request, ties broken by lowest battery). The queue head is
+ * granted the dock only when no robot is charging and the dock area is physically clear,
+ * so an undocking robot can leave before the next one drives in. Every other robot waits
+ * in its own marked queue slot. Departures are gated on queue room, so the number of
+ * robots converging on the charger is bounded by the dock plus its queue slots.
+ */
+let chargerQueue: number[] = [];
+let chargerGrantRobotId: number | undefined;
+let chargerStationId: string | undefined;
+
+function chargerSlots(): PhysicalQueueSlot[] {
+  return chargerStationId ? physicalQueueSlots.filter(slot => slot.stationId === chargerStationId) : [];
+}
+
+function isChargeBound(robot: RobotRuntime): boolean {
+  return robot.state === "to-charge" || (robot.state === "yielding" && robot.preYieldState === "to-charge");
+}
+
+function updateChargerAccess(robots: RobotRuntime[], scenario: WarehouseScenario, charger: StationConfig | undefined) {
+  chargerGrantRobotId = undefined;
+  chargerStationId = charger?.id;
+  if (!charger) {
+    chargerQueue = [];
+    return;
+  }
+  const byId = new Map(robots.map(r => [r.id, r]));
+  chargerQueue = chargerQueue.filter(id => {
+    const r = byId.get(id);
+    return r !== undefined && isChargeBound(r);
+  });
+  const newcomers = robots
+    .filter(r => isChargeBound(r) && !chargerQueue.includes(r.id))
+    .sort((a, b) => a.batteryMinutes - b.batteryMinutes || a.id - b.id);
+  chargerQueue.push(...newcomers.map(r => r.id));
+
+  const dock = approachOf(charger, scenario);
+  const dockBusy = robots.some(r => r.state === "charging");
+  const head = chargerQueue.map(id => byId.get(id)!).find(r => r.state === "to-charge");
+  if (!dockBusy && head) {
+    const clearRadius = robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12) + 0.4;
+    const dockClear = robots.every(r => r.id === head.id || distance(r.position, dock) >= clearRadius);
+    if (dockClear) chargerGrantRobotId = head.id;
+  }
+
+  const slots = chargerSlots();
+  for (const slot of slots) slot.assignedRobotId = undefined;
+  chargerQueue
+    .filter(id => id !== chargerGrantRobotId)
+    .forEach((id, index) => {
+      if (slots[index]) slots[index].assignedRobotId = id;
+    });
+}
+
+/** Where a to-charge robot should be: the dock when granted, else its queue slot. */
+function chargerTargetFor(robot: RobotRuntime, dock: Vec2): Vec2 | undefined {
+  if (chargerGrantRobotId === robot.id) return dock;
+  const slot = chargerSlots().find(s => s.assignedRobotId === robot.id);
+  // A queue longer than its slots is only possible through manual overrides: hold.
+  return slot?.position;
+}
+
+/** True when a robot may set off for the charger without overflowing its queue. */
+function chargerHasRoom(robot: RobotRuntime, robots: RobotRuntime[]): boolean {
+  if (chargerQueue.includes(robot.id)) return true;
+  const committed = robots.filter(r => isChargeBound(r) || r.state === "charging").length;
+  return committed < chargerSlots().length + 1;
+}
+
+function beginChargeTrip(robot: RobotRuntime) {
+  robot.state = "to-charge";
+  robot.path = [];
+  robot.pathIndex = 0;
+  robot.waitTicks = 0;
+  robot.blockedTicks = 0;
+  clearRobotRouteReservations(robot.id);
+  if (!chargerQueue.includes(robot.id)) chargerQueue.push(robot.id);
 }
 
 /**
@@ -1255,7 +1430,7 @@ function updateStartupDispatch(
 
 function updateStationQueues(scenario: WarehouseScenario, robots: RobotRuntime[], missions: Mission[]) {
   stationQueues = scenario.stations.map(station => {
-    const approach = stationApproachPosition(station, scenario);
+    const approach = approachOf(station, scenario);
     const margin = robotRadius(scenario) + 0.5;
     const positions: Vec2[] = [
       approach,
@@ -1331,6 +1506,12 @@ function detectAndResolveDeadlocks(
       deadlocksResolved++;
       continue;
     }
+    const alternate = sorted.slice(1).find(member =>
+      startYieldManeuver(member, robots, scenario, missions, congestionMap, solids, "Deadlock: role swap, yielding into side pocket", tick, { protect: [victim] }));
+    if (alternate) {
+      deadlocksResolved++;
+      continue;
+    }
 
     const reversed = reverseOneStep(victim, robots, scenario);
     if (reversed) {
@@ -1341,14 +1522,114 @@ function detectAndResolveDeadlocks(
       continue;
     }
 
-    victim.path = [];
-    victim.pathIndex = 0;
-    victim.blockedTicks = 0;
-    victim.deadlockRecoveries++;
-    deadlocksResolved++;
+    // No member of the cycle can move right now. Clearing the victim's path here (the
+    // old "replan" fallback) rebuilt the identical route and reset its blocked timer, so
+    // the cycle never escalated. Leave it blocked: the pairwise resolver forces a yield
+    // after a bounded wait and the progress watchdog escalates beyond that.
     const mission = missions.find(m => m.id === victim.missionId);
-    if (mission) mission.statusNote = "Deadlock: priority escalation, replanning";
+    if (mission) mission.statusNote = "Deadlock: waiting for forced resolution";
   }
+}
+
+const WATCHDOG_STALL_TICKS = 150;
+/** Pairwise block duration after which the yield-streak cap is overridden. */
+const PAIR_FORCE_YIELD_TICKS = 45;
+const WATCHDOG_ESCALATION_PERIOD = 50;
+const WATCHDOG_TRAVEL_STATES = new Set<RobotState>(["to-pick", "to-drop", "to-point", "returning", "to-charge", "yielding"]);
+
+/**
+ * Progress watchdog: the safety net behind the local traffic resolvers. A robot that
+ * should be travelling (it has route left, is not launch-held, and is not legitimately
+ * parked in a queue slot or yield pocket) but has not moved for WATCHDOG_STALL_TICKS is
+ * escalated every WATCHDOG_ESCALATION_PERIOD ticks, with increasing force:
+ *   1. its blocker is forced into a validated escape pocket (yield streak cap ignored);
+ *   2. otherwise the stalled robot itself is forced aside, protecting the blocker;
+ *   3. otherwise its route is dropped so it is replanned around stationary robots.
+ * This bounds how long any robot can wait, whatever layout the user builds.
+ */
+function runProgressWatchdog(
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  missions: Mission[],
+  congestionMap: Map<string, number>,
+  solids: SolidRect[],
+  tick: number,
+  startPositions: Map<number, Vec2>
+) {
+  for (const robot of robots) {
+    const hasRoute = robot.pathIndex < robot.path.length;
+    const start = startPositions.get(robot.id);
+    const moved = !start || distance(start, robot.position) > 1e-4;
+    // Only movement (or leaving travel) resets the stall clock. A route that is being
+    // replanned (empty for a tick) or a robot waiting in a queue slot freezes the clock
+    // instead: resetting it on every replan let a replan loop hide a deadlock forever.
+    if (!WATCHDOG_TRAVEL_STATES.has(robot.state) || isLaunchHeld(robot) || moved) {
+      robot.stallTicks = 0;
+      continue;
+    }
+    if (!hasRoute) continue;
+    robot.stallTicks = (robot.stallTicks ?? 0) + 1;
+    if (robot.stallTicks < WATCHDOG_STALL_TICKS || robot.stallTicks % WATCHDOG_ESCALATION_PERIOD !== 0) continue;
+
+    const blocker = findBlockingRobot(robot, robots, scenario);
+    const label = `R${String(robot.id).padStart(2, "0")}`;
+    let action = "";
+    if (blocker && blocker.state !== "picking" && blocker.state !== "placing" && blocker.state !== "charging" &&
+        startYieldManeuver(blocker, robots, scenario, missions, congestionMap, solids,
+          `Watchdog: clearing the way for stalled ${label}`, tick, { protect: [robot], force: true })) {
+      action = `forced R${String(blocker.id).padStart(2, "0")} aside`;
+    } else if (blocker && blocker.state === "yielding" && blocker.path.length === 0 && blocker.waitTicks > 0) {
+      // The blocker is idling in a pocket that turned out to be in the way and no better
+      // pocket exists: end its pause so it resumes (and drives off along) its own route.
+      blocker.waitTicks = 0;
+      action = `ended R${String(blocker.id).padStart(2, "0")} pocket wait`;
+    } else if (robot.state !== "yielding" &&
+        startYieldManeuver(robot, robots, scenario, missions, congestionMap, solids,
+          `Watchdog: ${label} stalled, stepping aside`, tick, { protect: blocker ? [blocker] : [], force: true })) {
+      action = "stepped aside";
+    } else if (robot.state !== "yielding") {
+      clearRobotRouteReservations(robot.id);
+      robot.path = [];
+      robot.pathIndex = 0;
+      robot.blockedTicks = 0;
+      const mission = missions.find(m => m.id === robot.missionId);
+      if (mission) {
+        mission.replanCount = (mission.replanCount ?? 0) + 1;
+        mission.statusNote = "Watchdog: replanning around stationary robots";
+      }
+      action = "replanned";
+    } else {
+      // A yield that cannot reach its pocket: abandon it and resume the original task.
+      robot.path = [];
+      robot.pathIndex = 0;
+      robot.waitTicks = 0;
+      action = "abandoned blocked yield";
+    }
+    deadlocksDetected++;
+    deadlocksResolved++;
+    recordTrafficEvent(tick, "deadlock", robot, blocker?.id, `Watchdog: ${label} stalled ${robot.stallTicks}t, ${action}`);
+  }
+}
+
+/** The robot physically in the way of `robot`'s next metre of route, if any. */
+function findBlockingRobot(robot: RobotRuntime, robots: RobotRuntime[], scenario: WarehouseScenario): RobotRuntime | undefined {
+  if (robot.waitingForRobotId !== undefined) {
+    const byId = robots.find(r => r.id === robot.waitingForRobotId);
+    if (byId) return byId;
+  }
+  const minDist = robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12) + 0.2;
+  const route = routePolyline(robot, 2.5);
+  let best: RobotRuntime | undefined;
+  let bestD = Infinity;
+  for (const other of robots) {
+    if (other.id === robot.id) continue;
+    const d = distanceToPolyline(other.position, route);
+    if (d < minDist && distance(other.position, robot.position) < bestD) {
+      best = other;
+      bestD = distance(other.position, robot.position);
+    }
+  }
+  return best;
 }
 
 function supervisorProtectionScore(robot: RobotRuntime, missions: Mission[], scenario: WarehouseScenario): number {
@@ -1443,10 +1724,11 @@ function resolveMultiRobotTrafficChains(
             `Supervisor: ${reason} for R${String(protectedRobot.id).padStart(2, "0")}`, tick
           );
         } else {
+          // Same as the cluster resolver: re-arming a wait every tick freezes the
+          // blocker forever. Leave it to the progress watchdog.
           command = "wait";
-          reason = "No clear path; waiting";
-          blocker.waitTicks = Math.max(blocker.waitTicks, YIELD_WAIT_TICKS);
-          success = true;
+          reason = "No clear path";
+          success = false;
         }
       }
 
@@ -1548,10 +1830,10 @@ function resolveImmediateRobotClusters(
         blocker.waitTicks = Math.max(blocker.waitTicks, 4);
         success = true;
       } else {
-        blocker.waitTicks = Math.max(blocker.waitTicks, 8);
-        blocker.currentSpeedMps = 0;
-        reason = "Cluster hold position";
-        success = true;
+        // No safe move exists for this blocker right now. Do NOT "hold" it: refreshing
+        // its wait timer every tick froze exactly the robot that has to clear the lane
+        // (a yield-pocket robot never resumed). The progress watchdog escalates instead.
+        success = false;
       }
 
       if (!success) continue;
@@ -1732,21 +2014,18 @@ function startDirectedYieldManeuver(
   note: string,
   tick: number
 ): boolean {
-  if (robot.state === "yielding" || robot.state === "picking" || robot.state === "placing") return false;
+  if (robot.state === "yielding" || robot.state === "picking" || robot.state === "placing" || robot.state === "charging") return false;
   if (robot.consecutiveYields >= MAX_CONSECUTIVE_YIELDS) return false;
   if (!isYieldTargetClear(robot, target, robots, scenario, solids)) return false;
+  const radius = robotRadius(scenario);
+  const minDist = radius * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12) + 0.12;
+  const path = buildYieldPath(robot.position, target, solids, radius, robots, robot.id);
+  // The escape legs themselves must not run through another robot's body.
+  if (!pathSegmentsBodyClear(robot.position, path, solids, radius)) return false;
+  if (!pathClearOfRobots(robot.position, path, robots, robot.id, minDist)) return false;
 
-  robot.preYieldState = robot.state;
-  robot.state = "yielding";
-  robot.yieldTarget = target;
-  robot.path = buildYieldPath(robot.position, target, solids, robotRadius(scenario), robots, robot.id);
-  robot.pathIndex = 0;
-  robot.blockedTicks = 0;
-  robot.waitingForRobotId = undefined;
-  robot.waitTicks = 0;
+  beginYield(robot, target, path);
   robot.currentSpeedMps = 0;
-  robot.deadlockRecoveries++;
-  robot.consecutiveYields++;
   congestionMap.set(aisleKey(robot.position), (congestionMap.get(aisleKey(robot.position)) ?? 0) + 1);
 
   recordTrafficEvent(tick, "yield", robot, blockedByRobotId, note);
@@ -1836,7 +2115,23 @@ function resolvePersistentRobotBlocks(
         `R${String(robot.id).padStart(2, "0")} has priority (${robot.carryingSlotId ? "loaded" : "empty"}, bat=${Math.round(robot.batteryMinutes)})`);
     }
 
-    if (startYieldManeuver(victim, robots, scenario, missions, congestionMap, solids, "Yielding to clear head-on traffic", tick)) {
+    const winner = victim === robot ? other : robot;
+    // Once both robots have been blocked well past the normal yield trigger, the yield
+    // streak cap must not keep them both stuck: the cap exists to stop one robot from
+    // yielding forever, not to make a pair of capped robots wait on each other forever.
+    const force = robot.blockedTicks >= PAIR_FORCE_YIELD_TICKS;
+    const roleSwapNote = `Role swap: R${String(winner.id).padStart(2, "0")} backs off so boxed-in R${String(victim.id).padStart(2, "0")} can clear`;
+    if (
+      startYieldManeuver(victim, robots, scenario, missions, congestionMap, solids, "Yielding to clear head-on traffic", tick, { protect: [winner] }) ||
+      // Role swap: the lower-priority robot is boxed in (e.g. leaving a dock with the
+      // station behind it), so the priority robot backs off instead. Without this the
+      // pair waited for each other forever.
+      startYieldManeuver(winner, robots, scenario, missions, congestionMap, solids, roleSwapNote, tick, { protect: [victim] }) ||
+      (force && (
+        startYieldManeuver(victim, robots, scenario, missions, congestionMap, solids, "Forced yield: pair blocked too long", tick, { protect: [winner], force: true }) ||
+        startYieldManeuver(winner, robots, scenario, missions, congestionMap, solids, roleSwapNote, tick, { protect: [victim], force: true })
+      ))
+    ) {
       deadlocksDetected++;
       deadlocksResolved++;
       handled.add(robot.id);
@@ -1858,15 +2153,33 @@ function holdForInboundDeeperColumnRobot(
 ): boolean {
   const myTarget = parkingTarget(robot);
   const tolerance = standbyArrivalTolerance(scenario);
+  const minDist = robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12);
   return robots.some(other => {
     if (other.id === robot.id) return false;
-    if (other.state !== "returning" && other.state !== "to-charge") return false;
-    const otherTarget = other.state === "to-charge" ? undefined : parkingTarget(other);
-    if (!otherTarget) return false;
-    if (Math.abs(otherTarget.x - myTarget.x) > 0.6) return false;            // different column
-    if (Math.sign(otherTarget.z) !== Math.sign(myTarget.z)) return false;     // different depot side
-    if (Math.abs(otherTarget.z) <= Math.abs(myTarget.z) + 0.3) return false;  // not deeper
-    return distance(other.position, otherTarget) > tolerance;                 // still inbound
+    const inbound = other.state === "returning" || (other.state === "yielding" && other.preYieldState === "returning");
+    if (!inbound) return false;
+    const otherTarget = parkingTarget(other);
+    if (distance(otherTarget, myTarget) < 0.3) return false;
+    if (distance(other.position, otherTarget) <= tolerance) return false;     // already docked
+
+    // Column geometry (before routes exist): same column, deeper bay docks first.
+    const sameColumnDeeper =
+      Math.abs(otherTarget.x - myTarget.x) <= 0.6 &&
+      Math.sign(otherTarget.z) === Math.sign(myTarget.z) &&
+      Math.abs(otherTarget.z) > Math.abs(myTarget.z) + 0.3;
+    if (sameColumnDeeper) return true;
+
+    // Any geometry (rows, corners): the inbound robot's remaining route to its bay runs
+    // through my bay, so I must not occupy it yet. If the dependency is mutual, the
+    // lower robot id goes first so exactly one of the two waits.
+    if (other.path.length <= other.pathIndex) return false;
+    const otherRoute = [{ ...other.position }, ...other.path.slice(other.pathIndex)];
+    if (distanceToPolyline(myTarget, otherRoute) >= minDist) return false;
+    if (robot.path.length > robot.pathIndex) {
+      const myRoute = [{ ...robot.position }, ...robot.path.slice(robot.pathIndex)];
+      if (distanceToPolyline(otherTarget, myRoute) < minDist) return other.id < robot.id;
+    }
+    return true;
   });
 }
 
@@ -1887,6 +2200,13 @@ function chooseYieldVictim(a: RobotRuntime, b: RobotRuntime): RobotRuntime {
   return a.id > b.id ? a : b;
 }
 
+type YieldOptions = {
+  /** Robots this yield must clear the way for (others obstructed are added automatically). */
+  protect?: RobotRuntime[];
+  /** Watchdog escalation: allow the yield even when the robot's yield streak is exhausted. */
+  force?: boolean;
+};
+
 function startYieldManeuver(
   robot: RobotRuntime,
   robots: RobotRuntime[],
@@ -1895,36 +2215,36 @@ function startYieldManeuver(
   congestionMap: Map<string, number>,
   solids: SolidRect[],
   note: string,
-  tick?: number
+  tick?: number,
+  options: YieldOptions = {}
 ): boolean {
-  if (robot.state === "yielding" || robot.state === "picking" || robot.state === "placing") return false;
-  if (robot.consecutiveYields >= MAX_CONSECUTIVE_YIELDS) return false;
+  if (robot.state === "picking" || robot.state === "placing" || robot.state === "charging") return false;
+  // A robot already yielding may only be re-yielded by the watchdog (its pocket turned
+  // out to be in someone's way); beginYield keeps its original pre-yield task.
+  if (robot.state === "yielding" && !options.force) return false;
+  if (!options.force && robot.consecutiveYields >= MAX_CONSECUTIVE_YIELDS) return false;
+  const lastFailure = escapeFailedAt.get(robot.id);
+  if (!options.force && lastFailure !== undefined && currentTick - lastFailure < ESCAPE_RETRY_TICKS) return false;
   const blockedByRobotId = robot.waitingForRobotId;
+  const blocker = blockedByRobotId !== undefined ? robots.find(r => r.id === blockedByRobotId) : undefined;
+  const protect = collectProtectedRobots(robot, robots, scenario, [
+    ...(options.protect ?? []),
+    ...(blocker ? [blocker] : []),
+  ]);
 
-  const bayTarget = scenario.simulation.showYieldBays !== false
-    ? findNearestYieldBay(robot, robots, scenario, solids)
-    : undefined;
-  const target = bayTarget ?? findYieldTarget(robot, robots, scenario, solids);
-  if (!target) return false;
+  const plan = planYieldEscape(robot, robots, scenario, solids, protect);
+  if (!plan) {
+    escapeFailedAt.set(robot.id, currentTick);
+    return false;
+  }
+  escapeFailedAt.delete(robot.id);
+  const target = plan.target;
 
-  robot.preYieldState = robot.state;
-  robot.state = "yielding";
-  robot.yieldTarget = target;
-  robot.path = buildYieldPath(robot.position, target, solids, robotRadius(scenario), robots, robot.id);
-  robot.pathIndex = 0;
-  robot.blockedTicks = 0;
-  robot.waitingForRobotId = undefined;
-  robot.waitTicks = 0;
-  robot.deadlockRecoveries++;
-  robot.consecutiveYields++;
+  beginYield(robot, target, plan.path);
   congestionMap.set(aisleKey(robot.position), (congestionMap.get(aisleKey(robot.position)) ?? 0) + 1);
 
-  if (bayTarget) {
-    const bay = yieldBays.find(b =>
-      Math.hypot(b.position.x - bayTarget.x, b.position.z - bayTarget.z) < 0.1
-    );
-    if (bay) bay.occupied = true;
-  }
+  const bay = yieldBays.find(b => distance(b.position, target) < 0.6);
+  if (bay) bay.occupied = true;
 
   recordTrafficEvent(tick ?? 0, "yield", robot, blockedByRobotId, note);
 
@@ -1946,22 +2266,19 @@ function startParkingShuffle(
   solids: SolidRect[],
   tick: number
 ): boolean {
-  const target = findParkingShuffleTarget(parkedRobot, protectedRobot, robots, scenario, solids);
-  if (!target) return false;
+  const shuffle = findParkingShuffleTarget(parkedRobot, protectedRobot, robots, scenario, solids);
+  const plan = shuffle ?? planYieldEscape(
+    parkedRobot, robots, scenario, solids,
+    collectProtectedRobots(parkedRobot, robots, scenario, [protectedRobot])
+  );
+  if (!plan) return false;
+  const target = plan.target;
 
-  parkedRobot.preYieldState = "idle";
-  parkedRobot.state = "yielding";
-  parkedRobot.yieldTarget = target;
+  // A parked robot yields from "idle"; it resumes idle and re-homes once the lane clears.
+  beginYield(parkedRobot, target, plan.path);
   if (canDynamicallyReassignParking(scenario)) {
     parkedRobot.assignedParkingPosition = { ...target };
   }
-  parkedRobot.path = buildYieldPath(parkedRobot.position, target, solids, robotRadius(scenario), robots, parkedRobot.id);
-  parkedRobot.pathIndex = 0;
-  parkedRobot.blockedTicks = 0;
-  parkedRobot.waitingForRobotId = undefined;
-  parkedRobot.waitTicks = 0;
-  parkedRobot.deadlockRecoveries++;
-  parkedRobot.consecutiveYields++;
   congestionMap.set(aisleKey(parkedRobot.position), (congestionMap.get(aisleKey(parkedRobot.position)) ?? 0) + 1);
 
   recordTrafficEvent(
@@ -1983,10 +2300,11 @@ function findParkingShuffleTarget(
   robots: RobotRuntime[],
   scenario: WarehouseScenario,
   solids: SolidRect[]
-): Vec2 | undefined {
+): { target: Vec2; path: Vec2[] } | undefined {
   const radius = robotRadius(scenario);
   const clearance = scenario.simulation.robotClearanceMeters ?? 0.12;
   const minRobotDistance = radius * 2 + clearance + 0.55;
+  const pathRobotDistance = radius * 2 + clearance + 0.12;
   const halfW = scenario.warehouse.width / 2;
   const halfD = scenario.warehouse.depth / 2;
   const awayFromProtectedPath = protectedRobot.path[protectedRobot.pathIndex] ?? protectedRobot.position;
@@ -2028,7 +2346,10 @@ function findParkingShuffleTarget(
       other.id !== parkedRobot.id &&
       Math.hypot(other.position.x - candidate.x, other.position.z - candidate.z) < minRobotDistance
     )) continue;
-    return candidate;
+    const path = buildYieldPath(parkedRobot.position, candidate, solids, radius, robots, parkedRobot.id);
+    if (!pathSegmentsBodyClear(parkedRobot.position, path, solids, radius)) continue;
+    if (!pathClearOfRobots(parkedRobot.position, path, robots, parkedRobot.id, pathRobotDistance)) continue;
+    return { target: candidate, path };
   }
 
   return undefined;
@@ -2109,11 +2430,17 @@ function findYieldTarget(
   scenario: WarehouseScenario,
   solids: SolidRect[]
 ): Vec2 | undefined {
+  return yieldCandidateOffsets(robot, scenario).find(candidate => isYieldTargetClear(robot, candidate, robots, scenario, solids));
+}
+
+function yieldCandidateOffsets(robot: RobotRuntime, scenario: WarehouseScenario): Vec2[] {
   const target = robot.path[robot.pathIndex] ?? robot.homePosition;
   const dx = target.x - robot.position.x;
   const dz = target.z - robot.position.z;
-  const len = Math.hypot(dx, dz) || 1;
-  const forward = { x: dx / len, z: dz / len };
+  const len = Math.hypot(dx, dz);
+  // No heading (parked / at its waypoint): fall back to facing +z instead of a zero
+  // vector, which used to collapse every candidate onto the robot's own position.
+  const forward = len > 0.05 ? { x: dx / len, z: dz / len } : { x: 0, z: 1 };
   const back = { x: -forward.x, z: -forward.z };
   const left = { x: -forward.z, z: forward.x };
   const right = { x: forward.z, z: -forward.x };
@@ -2130,8 +2457,7 @@ function findYieldTarget(
     candidates.push(offsetPoint(offsetPoint(robot.position, forward, step * 0.75), right, dist));
     candidates.push(offsetPoint(robot.position, forward, dist));
   }
-
-  return candidates.find(candidate => isYieldTargetClear(robot, candidate, robots, scenario, solids));
+  return candidates;
 }
 
 function offsetPoint(origin: Vec2, direction: Vec2, distance: number): Vec2 {
@@ -2237,9 +2563,7 @@ function resumeAfterYield(robot: RobotRuntime, missions: Mission[]) {
   const mission = missions.find(m => m.id === robot.missionId);
 
   if (robot.yieldTarget) {
-    const bay = yieldBays.find(b =>
-      Math.hypot(b.position.x - robot.yieldTarget!.x, b.position.z - robot.yieldTarget!.z) < 0.1
-    );
+    const bay = yieldBays.find(b => distance(b.position, robot.yieldTarget!) < 0.6);
     if (bay) bay.occupied = false;
   }
 
@@ -2249,7 +2573,10 @@ function resumeAfterYield(robot: RobotRuntime, missions: Mission[]) {
   robot.blockedTicks = 0;
   robot.path = [];
   robot.pathIndex = 0;
-  robot.consecutiveYields = 0;
+  // The yield streak is NOT reset here: it is only forgiven after real progress on the
+  // robot's own route (see moveAlongPath). Resetting on every resume made the anti-
+  // livelock cap and its priority escalation unreachable, so the same robot could be
+  // told to yield to the same conflict forever.
 
   if (!previous || previous === "yielding") {
     robot.state = mission ? "to-pick" : "idle";
@@ -2291,28 +2618,338 @@ function findCycles(graph: Map<number, number>): number[][] {
   return cycles;
 }
 
+/**
+ * Physical retreat: back up along the segment the robot just drove (toward its previous
+ * waypoint, at most MAX_RETREAT_METERS) as a short yield maneuver. The retreat is driven
+ * through moveAlongPath like any other motion, so it obeys speed, acceleration and the
+ * collision checks. (This used to set robot.position directly: a multi-metre teleport.)
+ */
 function reverseOneStep(
   robot: RobotRuntime,
   robots: RobotRuntime[],
   scenario: WarehouseScenario
 ): boolean {
   if (robot.pathIndex <= 0 || robot.path.length === 0) return false;
-  const prevPos = robot.path[robot.pathIndex - 1] ?? robot.homePosition;
+  if (robot.state === "yielding" || robot.state === "picking" || robot.state === "placing" || robot.state === "charging") return false;
+  const prevPos = robot.path[robot.pathIndex - 1];
+  const span = distance(robot.position, prevPos);
+  if (span < 0.15) return false;
+  const t = Math.min(1, MAX_RETREAT_METERS / span);
+  const retreat: Vec2 = {
+    x: robot.position.x + (prevPos.x - robot.position.x) * t,
+    z: robot.position.z + (prevPos.z - robot.position.z) * t,
+  };
 
   const minDist = robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12);
+  if (!segmentClearOfRobots(robot.position, retreat, robots, robot.id, minDist)) return false;
+
+  beginYield(robot, retreat, [retreat]);
+  return true;
+}
+
+/** Common state transition into a yield maneuver along an already validated path. */
+function beginYield(robot: RobotRuntime, target: Vec2, path: Vec2[]) {
+  robot.preYieldState = robot.state === "yielding" ? robot.preYieldState : robot.state;
+  robot.state = "yielding";
+  robot.yieldTarget = { ...target };
+  robot.path = path.map(p => ({ ...p }));
+  robot.pathIndex = 0;
+  robot.blockedTicks = 0;
+  robot.waitingForRobotId = undefined;
+  robot.waitTicks = 0;
+  robot.deadlockRecoveries++;
+  robot.consecutiveYields++;
+  robot.yieldDecayMeters = 0;
+  clearRobotRouteReservations(robot.id);
+}
+
+function segmentClearOfRobots(
+  a: Vec2,
+  b: Vec2,
+  robots: RobotRuntime[],
+  selfId: number,
+  minDist: number
+): boolean {
   for (const other of robots) {
-    if (other.id === robot.id) continue;
-    if (Math.hypot(other.position.x - prevPos.x, other.position.z - prevPos.z) < minDist) {
-      return false;
+    if (other.id === selfId) continue;
+    // "Never closer than now": a robot already inside the margin (e.g. the one it is
+    // backing away from) may be left behind, but the move must not close the gap.
+    const limit = Math.min(minDist, distance(other.position, a) - 1e-3);
+    if (pointSegmentDistance(other.position, a, b) < limit) return false;
+  }
+  return true;
+}
+
+function pathClearOfRobots(start: Vec2, path: Vec2[], robots: RobotRuntime[], selfId: number, minDist: number): boolean {
+  let from = start;
+  for (const point of path) {
+    if (!segmentClearOfRobots(from, point, robots, selfId, minDist)) return false;
+    from = point;
+  }
+  return true;
+}
+
+/** The next `maxMeters` of a robot's route as a polyline that starts at its position. */
+function routePolyline(robot: RobotRuntime, maxMeters: number): Vec2[] {
+  const points: Vec2[] = [{ ...robot.position }];
+  let travelled = 0;
+  for (let i = robot.pathIndex; i < robot.path.length && travelled < maxMeters; i++) {
+    travelled += distance(points[points.length - 1], robot.path[i]);
+    points.push(robot.path[i]);
+  }
+  return points;
+}
+
+function distanceToPolyline(point: Vec2, polyline: Vec2[]): number {
+  if (polyline.length === 1) return distance(point, polyline[0]);
+  let best = Infinity;
+  for (let i = 1; i < polyline.length; i++) {
+    best = Math.min(best, pointSegmentDistance(point, polyline[i - 1], polyline[i]));
+  }
+  return best;
+}
+
+/**
+ * Robots the yielding robot is in the way of: the explicitly protected robot(s), plus any
+ * robot whose near-term route passes through the yielder's body envelope. A yield pocket
+ * must clear all of their routes, otherwise the yield just moves the obstruction.
+ */
+function collectProtectedRobots(
+  robot: RobotRuntime,
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  explicit: RobotRuntime[] = []
+): RobotRuntime[] {
+  const minDist = robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12);
+  const result = new Map<number, RobotRuntime>();
+  for (const p of explicit) if (p.id !== robot.id) result.set(p.id, p);
+  for (const other of robots) {
+    if (other.id === robot.id || result.has(other.id)) continue;
+    if (other.path.length <= other.pathIndex) continue;
+    if (other.waitingForRobotId === robot.id || distanceToPolyline(robot.position, routePolyline(other, 10)) < minDist) {
+      result.set(other.id, other);
     }
   }
+  return [...result.values()];
+}
 
-  robot.position = { ...prevPos };
-  robot.pathIndex = Math.max(0, robot.pathIndex - 1);
-  robot.blockedTicks = 0;
-  robot.path = [];
-  robot.pathIndex = 0;
+type UndirectedEdge = { to: string; forward: boolean };
+const undirectedAdjacencyCache = new WeakMap<NavGraph, Map<string, UndirectedEdge[]>>();
+
+/** Graph adjacency in both directions; `forward` marks edges that follow lane direction. */
+function undirectedAdjacency(graph: NavGraph): Map<string, UndirectedEdge[]> {
+  const cached = undirectedAdjacencyCache.get(graph);
+  if (cached) return cached;
+  const adjacency = new Map<string, UndirectedEdge[]>();
+  for (const id of graph.nodes.keys()) adjacency.set(id, []);
+  for (const [id, node] of graph.nodes) {
+    for (const nb of node.neighbors) {
+      adjacency.get(id)!.push({ to: nb, forward: true });
+      const back = graph.nodes.get(nb);
+      if (back && !back.neighbors.includes(id)) adjacency.get(nb)?.push({ to: id, forward: false });
+    }
+  }
+  undirectedAdjacencyCache.set(graph, adjacency);
+  return adjacency;
+}
+
+/**
+ * Graph-based yield escape. Dijkstra over the navigation graph from the robot's position
+ * to the nearest node that (a) clears every protected robot's upcoming route by a full
+ * body envelope, (b) is not a station entrance or queue lane for an empty robot, and
+ * (c) is reachable along graph edges whose swept body stays clear of every other robot.
+ * Graph edges are already validated against racks, stations and walls, so the result is
+ * an axis-aligned, obstacle-free and robot-free escape route at planning time.
+ */
+function planGraphEscape(
+  robot: RobotRuntime,
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  solids: SolidRect[],
+  protect: RobotRuntime[]
+): { target: Vec2; path: Vec2[] } | undefined {
+  const graph = activeGraph;
+  if (!graph) return undefined;
+  const radius = robotRadius(scenario);
+  const clearance = scenario.simulation.robotClearanceMeters ?? 0.12;
+  const minDist = radius * 2 + clearance + 0.12;
+  const routeClearance = radius * 2 + clearance + 0.3;
+  const protectRoutes = protect.map(p => routePolyline(p, 14));
+  const protectIds = new Set(protect.map(p => p.id));
+  const otherRoutes = robots
+    .filter(o => o.id !== robot.id && !protectIds.has(o.id) && o.path.length > o.pathIndex)
+    .map(o => routePolyline(o, 5));
+  const empty = !robot.carryingSlotId;
+
+  const nodeClear = (pos: Vec2) => robots.every(o => o.id === robot.id || distance(o.position, pos) >= minDist);
+  const isGoal = (pos: Vec2) => {
+    if (distance(pos, robot.position) < minDist * 0.5) return false;
+    for (const route of protectRoutes) if (distanceToPolyline(pos, route) < routeClearance) return false;
+    if (empty && isStationTrafficKeepout(pos, scenario)) return false;
+    return pointInsideWarehouse(pos, scenario, radius + 0.2);
+  };
+  const softPenalty = (pos: Vec2) => {
+    let penalty = 0;
+    for (const route of otherRoutes) if (distanceToPolyline(pos, route) < routeClearance) penalty += 6;
+    return penalty;
+  };
+
+  const cost = new Map<string, number>();
+  const prev = new Map<string, string | undefined>();
+  const open: string[] = [];
+  for (const [id, node] of graph.nodes) {
+    const d = distance(robot.position, node.position);
+    if (d > 3.5) continue;
+    const axisAligned = Math.abs(node.position.x - robot.position.x) < 0.05 || Math.abs(node.position.z - robot.position.z) < 0.05;
+    if (!axisAligned || !nodeClear(node.position)) continue;
+    if (!isBodyClearSegment(robot.position, node.position, solids, radius)) continue;
+    if (!segmentClearOfRobots(robot.position, node.position, robots, robot.id, minDist)) continue;
+    cost.set(id, d);
+    prev.set(id, undefined);
+    open.push(id);
+  }
+  if (open.length === 0) return undefined;
+
+  const adjacency = undirectedAdjacency(graph);
+  const closed = new Set<string>();
+  let best: { id: string; score: number } | undefined;
+  while (open.length > 0) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if ((cost.get(open[i]) ?? Infinity) < (cost.get(open[bi]) ?? Infinity)) bi = i;
+    const id = open.splice(bi, 1)[0];
+    if (closed.has(id)) continue;
+    closed.add(id);
+    const g = cost.get(id) ?? Infinity;
+    if (best && g >= best.score) break;
+    const pos = graph.nodes.get(id)!.position;
+    if (isGoal(pos)) {
+      const score = g + softPenalty(pos);
+      if (!best || score < best.score) best = { id, score };
+    }
+    for (const edge of adjacency.get(id) ?? []) {
+      if (closed.has(edge.to)) continue;
+      const npos = graph.nodes.get(edge.to)!.position;
+      // Backing against a one-way lane is allowed for a short escape but costs double.
+      const ng = g + distance(pos, npos) * (edge.forward ? 1 : 2);
+      if (ng > YIELD_ESCAPE_MAX_METERS) continue;
+      if (!nodeClear(npos) || !segmentClearOfRobots(pos, npos, robots, robot.id, minDist)) continue;
+      if (ng < (cost.get(edge.to) ?? Infinity)) {
+        cost.set(edge.to, ng);
+        prev.set(edge.to, id);
+        open.push(edge.to);
+      }
+    }
+  }
+  if (!best) return undefined;
+
+  const ids: string[] = [];
+  for (let c: string | undefined = best.id; c !== undefined; c = prev.get(c)) ids.unshift(c);
+  const path = ids.map(id => ({ ...graph.nodes.get(id)!.position }));
+  return { target: path[path.length - 1], path };
+}
+
+/**
+ * Off-graph fallback (e.g. inside the parking depot): local candidate pockets, accepted
+ * only when the pocket and both legs of its L-shaped approach are clear of obstacles and
+ * robots, and the pocket clears every protected robot's route.
+ */
+function planLocalEscape(
+  robot: RobotRuntime,
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  solids: SolidRect[],
+  protect: RobotRuntime[]
+): { target: Vec2; path: Vec2[] } | undefined {
+  const radius = robotRadius(scenario);
+  const clearance = scenario.simulation.robotClearanceMeters ?? 0.12;
+  const minDist = radius * 2 + clearance + 0.12;
+  const routeClearance = radius * 2 + clearance + 0.3;
+  const protectRoutes = protect.map(p => routePolyline(p, 14));
+  const candidates: Vec2[] = [];
+  if (scenario.simulation.showYieldBays !== false) {
+    for (const bay of yieldBays) {
+      if (!bay.occupied && distance(bay.position, robot.position) < 12) candidates.push({ ...bay.position });
+    }
+  }
+  candidates.push(...yieldCandidateOffsets(robot, scenario));
+  // Direction-independent grid of pockets (parked robots have no heading to derive from):
+  // the L-shaped approach lets a robot first back out of a depot column, then side-step.
+  const step = radius * 2 + clearance;
+  for (const dx of [0, 1.3, 1.7, 2.3, 3.0]) {
+    for (const dz of [0, 1.2, 1.8, 2.6, 3.4]) {
+      if (dx === 0 && dz === 0) continue;
+      for (const sx of dx === 0 ? [1] : [-1, 1]) {
+        for (const sz of dz === 0 ? [1] : [-1, 1]) {
+          candidates.push({ x: robot.position.x + sx * dx * step, z: robot.position.z + sz * dz * step });
+        }
+      }
+    }
+  }
+  for (const candidate of candidates.sort((a, b) => distance(a, robot.position) - distance(b, robot.position))) {
+    if (!isYieldTargetClear(robot, candidate, robots, scenario, solids)) continue;
+    if (protectRoutes.some(route => distanceToPolyline(candidate, route) < routeClearance)) continue;
+    const path = buildYieldPath(robot.position, candidate, solids, radius, robots, robot.id);
+    if (!pathSegmentsBodyClear(robot.position, path, solids, radius)) continue;
+    if (!pathClearOfRobots(robot.position, path, robots, robot.id, minDist)) continue;
+    return { target: candidate, path };
+  }
+  return undefined;
+}
+
+function pathSegmentsBodyClear(start: Vec2, path: Vec2[], solids: SolidRect[], radius: number): boolean {
+  let from = start;
+  for (const point of path) {
+    if (!isBodyClearSegment(from, point, solids, radius)) return false;
+    from = point;
+  }
   return true;
+}
+
+function planYieldEscape(
+  robot: RobotRuntime,
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  solids: SolidRect[],
+  protect: RobotRuntime[]
+): { target: Vec2; path: Vec2[] } | undefined {
+  return planGraphEscape(robot, robots, scenario, solids, protect) ??
+    planLocalEscape(robot, robots, scenario, solids, protect) ??
+    planMicroRetreat(robot, robots, scenario, solids, protect);
+}
+
+/**
+ * Last-tier escape for tightly packed spots (dense depot rows, a robot pinned between a
+ * wall and its bay): a short axis-aligned creep of 0.3-1.3 m. It only needs the motion
+ * controller's own spacing to the other robots, not the roomier pocket clearance, but
+ * it must still move the robot fully off every protected robot's route. Often half a
+ * metre is all the other robot needs to get past, while no full pocket exists.
+ */
+function planMicroRetreat(
+  robot: RobotRuntime,
+  robots: RobotRuntime[],
+  scenario: WarehouseScenario,
+  solids: SolidRect[],
+  protect: RobotRuntime[]
+): { target: Vec2; path: Vec2[] } | undefined {
+  if (protect.length === 0) return undefined;
+  const radius = robotRadius(scenario);
+  const minDist = radius * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12);
+  const routeClearance = minDist + 0.08;
+  const protectRoutes = protect.map(p => routePolyline(p, 10));
+  const offRoutes = (pos: Vec2) => protectRoutes.every(route => distanceToPolyline(pos, route) >= routeClearance);
+  if (offRoutes(robot.position)) return undefined;
+  for (const d of [0.3, 0.5, 0.7, 1.0, 1.3]) {
+    for (const dir of [{ x: 1, z: 0 }, { x: -1, z: 0 }, { x: 0, z: 1 }, { x: 0, z: -1 }]) {
+      const target = { x: robot.position.x + dir.x * d, z: robot.position.z + dir.z * d };
+      if (!pointInsideWarehouse(target, scenario, radius + 0.05)) continue;
+      if (!offRoutes(target)) continue;
+      if (!isBodyClearSegment(robot.position, target, solids, radius)) continue;
+      if (robots.some(o => o.id !== robot.id && distance(o.position, target) < minDist + 0.05)) continue;
+      if (!segmentClearOfRobots(robot.position, target, robots, robot.id, minDist)) continue;
+      return { target, path: [target] };
+    }
+  }
+  return undefined;
 }
 
 function startReturnToStandby(
@@ -2359,7 +2996,7 @@ function buildReturnPathToStandby(
 
   const directPath = assignment?.path ?? (ctx
     ? pathToPointPredictive(graph, robot.position, target, ctx)
-    : pathToPoint(graph, robot.position, target));
+    : pathToPoint(graph, robot.position, target, tickAvoid));
   if (isReturnPathUsable(directPath, target, solids, scenario)) {
     return directPath;
   }
@@ -2373,7 +3010,7 @@ function buildReturnPathToStandby(
   for (const candidate of approachCandidates) {
     const candidatePath = ctx
       ? pathToPointPredictive(graph, robot.position, candidate, ctx)
-      : pathToPoint(graph, robot.position, candidate);
+      : pathToPoint(graph, robot.position, candidate, tickAvoid);
     const path = appendReturnEndpoint(candidatePath, target, solids);
     if (isReturnPathUsable(path, target, solids, scenario)) {
       return path;
@@ -2420,7 +3057,7 @@ function allocateParkingTarget(
 
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, target, ctx)
-      : pathToPoint(graph, robot.position, target);
+      : pathToPoint(graph, robot.position, target, tickAvoid);
     if (isReturnPathUsable(path, target, solids, scenario)) {
       return { target, path };
     }
@@ -2444,7 +3081,7 @@ function allocateParkingTarget(
   for (const bay of sorted) {
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, bay.position, ctx)
-      : pathToPoint(graph, robot.position, bay.position);
+      : pathToPoint(graph, robot.position, bay.position, tickAvoid);
     if (isReturnPathUsable(path, bay.position, solids, scenario)) {
       const oldBayId = robot.assignedParkingBayId;
       if (oldBayId && oldBayId !== bay.id) {
@@ -2465,7 +3102,7 @@ function allocateParkingTarget(
     if (!isParkingCandidateAvailable(target, robot, robots, scenario, solids, minRobotDistance, radius)) continue;
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, target, ctx)
-      : pathToPoint(graph, robot.position, target);
+      : pathToPoint(graph, robot.position, target, tickAvoid);
     if (isReturnPathUsable(path, target, solids, scenario)) {
       const bayId = findBayIdForPosition(target, standbyArrivalTolerance(scenario) * 3);
       if (bayId) {
@@ -2480,7 +3117,7 @@ function allocateParkingTarget(
   const fallback = parkingTarget(robot);
   const fallbackPath = ctx
     ? pathToPointPredictive(graph, robot.position, fallback, ctx)
-    : pathToPoint(graph, robot.position, fallback);
+    : pathToPoint(graph, robot.position, fallback, tickAvoid);
   if (isReturnPathUsable(fallbackPath, fallback, solids, scenario)) {
     return { target: fallback, path: fallbackPath };
   }
@@ -2507,7 +3144,7 @@ function parkingQueuePenalty(pos: Vec2, scenario: WarehouseScenario, approaches?
 function workingStationApproaches(scenario: WarehouseScenario): Vec2[] {
   return scenario.stations
     .filter(station => station.type !== "charging")
-    .map(station => stationApproachPosition(station, scenario));
+    .map(station => approachOf(station, scenario));
 }
 
 function sortBaysByStrategy(
@@ -2716,8 +3353,29 @@ function parkingTarget(robot: RobotRuntime): Vec2 {
   return robot.assignedParkingPosition ?? robot.homePosition;
 }
 
-function dockRobotAtParkingTarget(robot: RobotRuntime, scenario: WarehouseScenario, reason: string) {
+/**
+ * Finish docking at the parking target. A robot is only declared docked once it is
+ * physically on the bay (within a numerical settle distance). If it is still farther
+ * away, it is given a short axis-aligned final-approach path and keeps driving under
+ * normal collision control: docking never moves a robot farther than one legal step.
+ * Returns true when the robot is docked.
+ */
+function dockRobotAtParkingTarget(robot: RobotRuntime, scenario: WarehouseScenario, reason: string): boolean {
   const target = parkingTarget(robot);
+  if (distance(robot.position, target) > DOCK_SETTLE_EPS) {
+    const last = robot.path[robot.path.length - 1];
+    const approaching = robot.state === "returning" &&
+      robot.pathIndex < robot.path.length &&
+      last !== undefined && distance(last, target) <= DOCK_SETTLE_EPS;
+    if (!approaching) {
+      robot.state = "returning";
+      robot.path = appendReturnEndpoint([{ ...robot.position }], target, buildSolidObstacles(scenario)).slice(1);
+      robot.pathIndex = 0;
+      robot.blockedTicks = 0;
+      robot.parkingReassignReason = `final-approach:${reason}`;
+    }
+    return false;
+  }
   robot.position = { ...target };
   if (distance(target, robot.homePosition) <= standbyArrivalTolerance(scenario) * 3) {
     robot.heading = robot.homeHeading ?? 0;
@@ -2733,6 +3391,7 @@ function dockRobotAtParkingTarget(robot: RobotRuntime, scenario: WarehouseScenar
   robot.consecutiveYields = 0;
   robot.currentSpeedMps = 0;
   robot.parkingReassignReason = reason;
+  return true;
 }
 
 function standbyApproachCandidates(target: Vec2, spacing: number): Vec2[] {
@@ -2816,7 +3475,7 @@ function buildParkingPositions(scenario: WarehouseScenario, count: number): Vec2
   // Manhattan bends extend them to the walls). A parked robot closer than laneClear to
   // one of those lanes physically blocks every robot driving it, so bays must keep out.
   const laneClear = radius * 2 + clearance + 0.5;
-  const approachPoints = scenario.stations.map(st => stationApproachPosition(st, scenario));
+  const approachPoints = scenario.stations.map(st => approachOf(st, scenario));
   const approachLaneZs = [...new Set(approachPoints.map(a => a.z))];
   const approachLaneXs = [...new Set(approachPoints.map(a => a.x))];
 
@@ -2943,7 +3602,7 @@ function isStationTrafficKeepout(point: Vec2, scenario: WarehouseScenario): bool
   const clearance = scenario.simulation.robotClearanceMeters ?? 0.12;
   for (const station of scenario.stations) {
     if (station.type === "charging") continue;
-    const approach = stationApproachPosition(station, scenario);
+    const approach = approachOf(station, scenario);
     if (distance(point, approach) < Math.max(2.6, radius * 2 + clearance + 1.2)) return true;
 
     const dirX = approach.x - station.position.x;
@@ -2976,7 +3635,7 @@ function isOperationalParkingKeepout(point: Vec2, scenario: WarehouseScenario, r
       ) {
         return true;
       }
-      const approach = stationApproachPosition(station, scenario);
+      const approach = approachOf(station, scenario);
       if (distance(point, approach) < Math.max(3.0, radius * 3)) {
         return true;
       }
@@ -2992,7 +3651,7 @@ function isOperationalParkingKeepout(point: Vec2, scenario: WarehouseScenario, r
       return true;
     }
 
-    const approach = stationApproachPosition(station, scenario);
+    const approach = approachOf(station, scenario);
     if (distance(point, approach) < Math.max(4.8, radius * 4.5)) {
       return true;
     }
@@ -3087,6 +3746,8 @@ function moveAlongPath(
     robot.waitingForRobotId = undefined;
     robot.totalDistance += dist;
     if (mission) mission.distanceMeters += dist;
+    noteRouteProgress(robot, dist);
+    releasePassedReservation(robot, target);
     robot.pathIndex++;
 
     if (robot.pathIndex >= robot.path.length) {
@@ -3107,9 +3768,30 @@ function moveAlongPath(
     robot.position = nextPos;
     robot.blockedTicks = 0;
     robot.waitingForRobotId = undefined;
+    noteRouteProgress(robot, speed);
     robot.heading = rotateToward(robot.heading, Math.atan2(dx, dz), scenario.robots.turnSpeedRadPerSecond * (scenario.simulation.tickMs / 1000));
   }
   return false;
+}
+
+/** Real progress on the robot's own route forgives its yield streak and its stall timer. */
+function noteRouteProgress(robot: RobotRuntime, meters: number) {
+  robot.stallTicks = 0;
+  if (robot.state === "yielding") return;
+  robot.yieldDecayMeters = (robot.yieldDecayMeters ?? 0) + meters;
+  if (robot.consecutiveYields > 0 && robot.yieldDecayMeters >= YIELD_STREAK_DECAY_METERS) {
+    robot.consecutiveYields = 0;
+    robot.yieldDecayMeters = 0;
+  }
+}
+
+/** Drop this robot's route reservation for a waypoint it has just driven through. */
+function releasePassedReservation(robot: RobotRuntime, waypoint: Vec2) {
+  const key = reservationCellKey(waypoint);
+  const ids = routeReservationTable.get(key);
+  if (!ids) return;
+  ids.delete(robot.id);
+  if (ids.size === 0) routeReservationTable.delete(key);
 }
 
 function rotateToward(current: number, target: number, maxStep: number): number {
@@ -3708,7 +4390,8 @@ function clearRobotRouteReservations(robotId: number) {
 
 function buildCongestionContextForTick(
   congestionMap: Map<string, number>,
-  scenario: WarehouseScenario
+  scenario: WarehouseScenario,
+  robots: RobotRuntime[] = []
 ): CongestionContext {
   const stationQueueLengths: Record<string, number> = {};
   for (const queue of stationQueues) {
@@ -3729,6 +4412,9 @@ function buildCongestionContextForTick(
     yieldBayOccupancy: occupiedBays / totalBays,
     routeReservations,
     aisleDirections: computeAisleDirectionRanges(scenario),
+    // Shared by every planner this tick; each planner ignores the point at its own start.
+    avoidPoints: stationaryObstacles(robots, undefined),
+    avoidRadius: robotRadius(scenario) * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12),
   };
 }
 
@@ -3750,6 +4436,16 @@ function computeAisleDirectionRanges(scenario: WarehouseScenario) {
   return result;
 }
 
+/**
+ * Congestion-aware reroute for a robot that has accumulated a long delay on its route.
+ *
+ * The robot keeps its current destination (the end of its path): re-deriving the goal
+ * here used to send charger-queue robots straight to the occupied dock and station-queue
+ * robots past their queue slot, which the owning branch then undid on the next tick (a
+ * replan ping-pong). The new route is only adopted when it actually differs from the
+ * remaining one; otherwise the delay baseline is reset so the same identical route is
+ * not "replanned" again every tick.
+ */
 function checkDynamicReroute(
   robot: RobotRuntime,
   robots: RobotRuntime[],
@@ -3760,48 +4456,69 @@ function checkDynamicReroute(
   ctx: CongestionContext,
   tick: number
 ): boolean {
-  if (!robot.routeAssignedAtTick || robot.path.length === 0) return false;
+  if (!robot.routeAssignedAtTick || robot.path.length === 0 || robot.pathIndex >= robot.path.length) return false;
   if (robot.state === "yielding" || robot.state === "picking" || robot.state === "placing" ||
       robot.state === "charging" || robot.state === "idle") return false;
 
   const delayTicks = robot.totalWaitTicks - (robot.waitTicksAtRouteStart ?? 0);
   if (delayTicks < REROUTE_DELAY_THRESHOLD) return false;
+  if (robot.lastReplanTick !== undefined && tick - robot.lastReplanTick < REROUTE_DELAY_THRESHOLD) return false;
 
   const mission = missions.find(m => m.id === robot.missionId);
-  let newPath: Vec2[] = [];
+  const goal = robot.path[robot.path.length - 1];
+  // ctx carries this tick's stationary robots, so the new route steers around them.
+  const newPath = pathToPointPredictive(graph, robot.position, goal, ctx);
+  robot.lastReplanTick = tick;
+  // Restart the delay window either way: an unchanged route is kept, not re-issued.
+  robot.waitTicksAtRouteStart = robot.totalWaitTicks;
 
-  if (robot.state === "to-pick") {
-    const slot = slots.find(s => s.id === mission?.sourceSlotId);
-    if (slot) newPath = pathToSlotPredictive(graph, robot.position, { x: slot.position.x, z: slot.position.z }, ctx);
-  } else if (robot.state === "to-drop") {
-    const station = scenario.stations.find(s => s.id === mission?.targetStationId);
-    if (station) newPath = pathToStationPredictive(graph, robot.position, station, ctx);
-  } else if (robot.state === "returning") {
-    const solids = buildSolidObstacles(scenario);
-    newPath = buildReturnPathToStandby(robot, robots, scenario, graph, solids, ctx);
-  } else if (robot.state === "to-charge") {
-    const chargingStation = scenario.stations.find(s => s.type === "charging");
-    if (chargingStation) newPath = pathToStationPredictive(graph, robot.position, chargingStation, ctx);
-  } else if (robot.state === "to-point") {
-    const target = mission?.targetPosition;
-    if (target) newPath = pathToPointPredictive(graph, robot.position, target, ctx);
+  const reachesGoal = newPath.length > 1 && distance(newPath[newPath.length - 1], goal) <= 0.05;
+  if (!reachesGoal || sameRoute(newPath, robot.path.slice(robot.pathIndex))) return false;
+
+  clearRobotRouteReservations(robot.id);
+  robot.path = newPath;
+  robot.pathIndex = 0;
+  robot.blockedTicks = 0;
+  registerRouteReservations(robot, newPath, tick, scenario);
+  dynamicRerouteCount++;
+  if (mission) {
+    mission.statusNote = "Dynamic reroute: congestion-aware replanning";
+    mission.replanCount = (mission.replanCount ?? 0) + 1;
   }
+  return true;
+}
 
-  if (newPath.length > 1) {
-    clearRobotRouteReservations(robot.id);
-    robot.path = newPath;
-    robot.pathIndex = 0;
-    robot.blockedTicks = 0;
-    registerRouteReservations(robot, newPath, tick, scenario);
-    dynamicRerouteCount++;
-    if (mission) {
-      mission.statusNote = "Dynamic reroute: congestion-aware replanning";
-      mission.replanCount = (mission.replanCount ?? 0) + 1;
+/** True when every waypoint of `candidate` (after its start) lies on the `current` route. */
+function sameRoute(candidate: Vec2[], current: Vec2[]): boolean {
+  for (let i = 1; i < candidate.length; i++) {
+    const p = candidate[i];
+    let onRoute = false;
+    for (let j = 0; j < current.length && !onRoute; j++) {
+      if (distance(p, current[j]) <= 0.1) onRoute = true;
+      else if (j > 0 && pointSegmentDistance(p, current[j - 1], current[j]) <= 0.1) onRoute = true;
     }
-    return true;
+    if (!onRoute) return false;
   }
+  return true;
+}
 
-  return false;
+/**
+ * Robots that will not move out of the way soon (lifting, placing, charging, waiting at
+ * a station or charger queue slot, holding in a yield pocket, or parked off their bay).
+ * Planning routes through them only produces long waits behind them.
+ */
+function stationaryObstacles(robots: RobotRuntime[], self: RobotRuntime | undefined): Vec2[] {
+  const points: Vec2[] = [];
+  for (const other of robots) {
+    if (other.id === self?.id) continue;
+    const pathDone = other.path.length === 0 || other.pathIndex >= other.path.length;
+    const stationary =
+      other.state === "picking" || other.state === "placing" || other.state === "charging" ||
+      ((other.state === "to-charge" || other.state === "to-drop" || other.state === "yielding") && pathDone) ||
+      (other.state === "idle" && pathDone);
+    if (stationary) points.push({ ...other.position });
+  }
+  return points;
 }
 
 function buildPhysicalQueueSlots(scenario: WarehouseScenario): PhysicalQueueSlot[] {
@@ -3809,9 +4526,13 @@ function buildPhysicalQueueSlots(scenario: WarehouseScenario): PhysicalQueueSlot
   const radius = robotRadius(scenario);
   const spacing = radius * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12) + 0.5;
 
+  const solids = buildSolidObstacles(scenario);
   for (const station of scenario.stations) {
-    if (station.type === "charging") continue;
-    const approach = stationApproachPosition(station, scenario);
+    if (station.type === "charging") {
+      result.push(...buildChargerQueueSlots(station, scenario, spacing, solids));
+      continue;
+    }
+    const approach = approachOf(station, scenario);
     const dx = approach.x - station.position.x;
     const dz = approach.z - station.position.z;
     const len = Math.hypot(dx, dz) || 1;
@@ -3828,6 +4549,36 @@ function buildPhysicalQueueSlots(scenario: WarehouseScenario): PhysicalQueueSlot
     }
   }
   return result;
+}
+
+/**
+ * Charger waiting slots, laid out outward from the dock along the approach normal. The
+ * first slot sits 1.5 spacings out so an undocking robot has room to turn away before it
+ * meets the queue head. Slots that would clip an obstacle or a wall are dropped, and the
+ * queue is capped at 4 (more waiting robots would only clog the charger corner).
+ */
+function buildChargerQueueSlots(
+  station: StationConfig,
+  scenario: WarehouseScenario,
+  spacing: number,
+  solids: SolidRect[]
+): PhysicalQueueSlot[] {
+  const radius = robotRadius(scenario);
+  const approach = approachOf(station, scenario);
+  const dx = approach.x - station.position.x;
+  const dz = approach.z - station.position.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const dir = { x: dx / len, z: dz / len };
+  const wanted = Math.max(1, Math.min(4, station.queueCapacity));
+  const slots: PhysicalQueueSlot[] = [];
+  for (let i = 0; slots.length < wanted && i < wanted + 3; i++) {
+    const offset = (i + 1.5) * spacing;
+    const position = { x: approach.x + dir.x * offset, z: approach.z + dir.z * offset };
+    if (!pointInsideWarehouse(position, scenario, radius + 0.3)) break;
+    if (solids.some(solid => circleIntersectsRect(position, radius + 0.1, solid))) continue;
+    slots.push({ id: `qslot-${station.id}-${slots.length}`, stationId: station.id, position });
+  }
+  return slots;
 }
 
 function findAvailableQueueSlot(stationId: string, robotId: number): PhysicalQueueSlot | undefined {
@@ -3986,7 +4737,7 @@ function assignCompletedWaveParking(
 
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, bay.position, ctx)
-      : pathToPoint(graph, robot.position, bay.position);
+      : pathToPoint(graph, robot.position, bay.position, tickAvoid);
     if (!isReturnPathUsable(path, bay.position, solids, scenario)) continue;
 
     const oldBayId = robot.assignedParkingBayId;
@@ -4031,9 +4782,10 @@ function assignCompletedWaveHomeParking(
     robot.assignedParkingPosition = { ...robot.homePosition };
 
     if (distance(robot.position, robot.homePosition) <= tolerance) {
-      dockRobotAtParkingTarget(robot, scenario, "home-slot");
-      updateBayStateForRobot(robot, "occupied");
-      clearRobotRouteReservations(robot.id);
+      if (dockRobotAtParkingTarget(robot, scenario, "home-slot")) {
+        updateBayStateForRobot(robot, "occupied");
+        clearRobotRouteReservations(robot.id);
+      }
       continue;
     }
 
@@ -4047,7 +4799,7 @@ function assignCompletedWaveHomeParking(
 
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, robot.homePosition, ctx)
-      : pathToPoint(graph, robot.position, robot.homePosition);
+      : pathToPoint(graph, robot.position, robot.homePosition, tickAvoid);
     if (!isReturnPathUsable(path, robot.homePosition, solids, scenario)) continue;
 
     robot.state = "returning";
@@ -4103,9 +4855,10 @@ function enforceExactHomeDockingWhenComplete(
 
     const homeDistance = distance(robot.position, robot.homePosition);
     if (homeDistance <= captureTolerance) {
-      dockRobotAtParkingTarget(robot, scenario, "exact-home-dock");
-      updateBayStateForRobot(robot, "occupied");
-      clearRobotRouteReservations(robot.id);
+      if (dockRobotAtParkingTarget(robot, scenario, "exact-home-dock")) {
+        updateBayStateForRobot(robot, "occupied");
+        clearRobotRouteReservations(robot.id);
+      }
       continue;
     }
 
@@ -4118,7 +4871,7 @@ function enforceExactHomeDockingWhenComplete(
 
     const path = ctx
       ? pathToPointPredictive(graph, robot.position, robot.homePosition, ctx)
-      : pathToPoint(graph, robot.position, robot.homePosition);
+      : pathToPoint(graph, robot.position, robot.homePosition, tickAvoid);
     if (!isReturnPathUsable(path, robot.homePosition, solids, scenario)) continue;
 
     robot.state = "returning";
@@ -4199,8 +4952,9 @@ function tryFinalAutoDock(
   );
   if (targetBlocked) return false;
 
-  dockRobotAtParkingTarget(robot, scenario, "final-auto-dock");
-  return true;
+  // Either already on the bay (docked), or a short final-approach path is set and the
+  // robot keeps driving through the normal movement code below the caller.
+  return dockRobotAtParkingTarget(robot, scenario, "final-auto-dock");
 }
 
 function isParkingBayAccessBlockedByParkedRobot(bay: ParkingBayInfo, robots: RobotRuntime[]): boolean {
@@ -4264,17 +5018,22 @@ function isReturningRobotBlockingStationExit(
 
   for (const station of scenario.stations) {
     if (station.type === "charging") continue;
-    const approach = stationApproachPosition(station, scenario);
+    const approach = approachOf(station, scenario);
     const distToApproach = distance(robot.position, approach);
     if (distToApproach > exitCheckRadius) continue;
 
-    const missionRobotNearby = robots.some(r =>
+    // Only yield when this robot actually sits on a nearby mission robot's route. The
+    // old proximity-only trigger made a returning robot yield over and over beside a
+    // mission robot that was waiting for something else entirely (a yield livelock).
+    const minDist = radius * 2 + (scenario.simulation.robotClearanceMeters ?? 0.12);
+    const obstructsMissionRobot = robots.some(r =>
       r.id !== robot.id &&
       r.missionId !== undefined &&
       (r.state === "to-drop" || r.state === "to-pick") &&
-      distance(r.position, approach) < exitCheckRadius * 1.5
+      distance(r.position, approach) < exitCheckRadius * 1.5 &&
+      distanceToPolyline(robot.position, routePolyline(r, 8)) < minDist
     );
-    if (missionRobotNearby) return true;
+    if (obstructsMissionRobot) return true;
   }
   return false;
 }

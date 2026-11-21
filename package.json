@@ -11,7 +11,9 @@
     "test:landing": "node scripts/landing_smoke_test.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test:sim": "tsc scripts/sim_smoke_test.ts --module CommonJS --target ES2022 --moduleResolution node --outDir smoke-build-cjs --rootDir . --skipLibCheck && node -e \"require('fs').mkdirSync('smoke-build-cjs',{recursive:true});require('fs').writeFileSync('smoke-build-cjs/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node smoke-build-cjs/scripts/sim_smoke_test.js",
-    "convert:warehouse-step": "python scripts/step_tessellation_to_glb.py C:/Users/NABIL/Downloads/Warehouse.step public/models/warehouse-from-step.glb"
+    "convert:warehouse-step": "python scripts/step_tessellation_to_glb.py C:/Users/NABIL/Downloads/Warehouse.step public/models/warehouse-from-step.glb",
+    "test:stress": "tsc scripts/sim_stress_test.ts --module CommonJS --target ES2022 --moduleResolution node --outDir smoke-build-cjs --rootDir . --skipLibCheck && node -e \"require('fs').writeFileSync('smoke-build-cjs/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node smoke-build-cjs/scripts/sim_stress_test.js",
+    "test:sweep": "tsc scripts/sim_sweep_test.ts --module CommonJS --target ES2022 --moduleResolution node --outDir smoke-build-cjs --rootDir . --skipLibCheck && node -e \"require('fs').writeFileSync('smoke-build-cjs/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node smoke-build-cjs/scripts/sim_sweep_test.js"
   },
   "dependencies": {
     "three": "^0.177.0",

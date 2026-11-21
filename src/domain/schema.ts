@@ -276,6 +276,14 @@ export type RobotRuntime = {
   launchCleared?: boolean;
   /** Parked at a temporary nearby bay (e.g. after charging) instead of the fixed home slot. */
   usingTemporaryBay?: boolean;
+  /** Metres driven on its own route since the last yield; forgives the yield streak. */
+  yieldDecayMeters?: number;
+  /** Consecutive ticks without progress while it should be travelling (watchdog input). */
+  stallTicks?: number;
+  /** Tick of the last route replan, used to rate-limit reroutes. */
+  lastReplanTick?: number;
+  /** Station dock this robot is queued for or holds (station access protocol). */
+  stationAccessId?: string;
 };
 
 export type LaunchDecision = {

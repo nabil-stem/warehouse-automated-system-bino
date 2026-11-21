@@ -74,6 +74,8 @@ If port 5173 is occupied, use the port printed by Vite.
 | `npm run build` | Check TypeScript and build both pages into `dist/`. |
 | `npm run preview` | Serve the production build, normally on port 4173. |
 | `npm run test:sim` | Run the headless simulation regression suite. |
+| `npm run test:stress` | Run the instrumented stress scenarios (crowded aisles, single-station load, 40–60 mission batches, charging). |
+| `npm run test:sweep` | Run randomized scenario variations; pass `-- --runs=60 --seed=7` to change size or seed. |
 | `npm run test:browser` | Run the simulator browser smoke checks. |
 | `npm run test:landing` | Verify responsive layouts, metadata, links, simulator entry, and demo startup. |
 
@@ -187,7 +189,23 @@ npm run build
 npm run test:sim
 ```
 
-The build includes strict TypeScript checking. The headless suite contains **67 scenarios** covering missions, shelf access, traffic, startup spacing, collision detection, charging, parking, and payload round trips. It prints JSON results and exits with a nonzero code if a scenario fails.
+The build includes strict TypeScript checking. The headless suite contains **76 scenarios** covering missions, shelf access, traffic, startup spacing, collision detection, charging, parking, and payload round trips. It prints JSON results and exits with a nonzero code if a scenario fails.
+
+### Movement and mission stress checks
+
+```bash
+npm run test:stress
+npm run test:sweep
+```
+
+These suites check physical invariants on every simulation tick, not only the final result:
+
+- no robot moves farther in one tick than its top speed allows;
+- no two robot bodies overlap, and no body enters a rack, station, or bollard;
+- no robot on a travel leg stays motionless indefinitely;
+- every mission completes and the whole fleet ends parked.
+
+`test:stress` runs hand-built scenarios (crowded aisles, one overloaded station, 40- and 60-mission batches, low-battery fleets, round trips, continuous injection). `test:sweep` generates reproducible random variations of fleet size, batch size, allocator, routing mode, aisle width, round-trip mode, and battery state.
 
 ### Browser checks
 

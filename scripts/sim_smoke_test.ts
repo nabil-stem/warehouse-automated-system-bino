@@ -1,10 +1,11 @@
 import { createDefaultScenario } from "../src/app/defaultScenario";
 import type { Mission, RobotRuntime, Slot, WarehouseScenario } from "../src/domain/schema";
 import { computeWarehouseExtents, generateSlots, normalizeScenarioGeometry } from "../src/domain/warehouseGenerator";
-import { buildNavigationGraph, pathToPoint } from "../src/domain/navigationGraph";
+import { buildNavigationGraph, pathToPoint, pathToStation } from "../src/domain/navigationGraph";
 import { initRobots, tickRobots, getDeadlockStats, getStationQueues, getTrafficEvents, getYieldBays, clearTrafficEvents, getParkingBays, getParkingReassignments, getPhysicalCollisionCount, resetCollisionTracking, __detectPhysicalCollisionsForTest, getStartupDispatchStats, getMissionAnalysis } from "../src/domain/robotSimulation";
 import { isClearSegment } from "../src/domain/obstacles";
-import { assignMissions, createManualMission, createMoveToPointMission, assignMissionToRobot, generateMissions, resetMissionCounter, resolveActiveMissionLimit } from "../src/domain/missionPlanner";
+import { assignMissions, createManualMission, createMoveToPointMission, assignMissionToRobot, generateMissions, resetMissionCounter, resolveActiveMissionLimit, assignmentBatteryFloor } from "../src/domain/missionPlanner";
+import { runStressCase, STRESS_CASES } from "./sim_stress_test";
 import { buildSolidObstacles, robotRadius } from "../src/domain/obstacles";
 import { recordTick, getAllTraces, clearTraces } from "../src/domain/traceRecorder";
 
@@ -1657,7 +1658,7 @@ function runTrafficStress12Robots20MissionsTest(): TestResult {
   const permanentDeadlock = robots.some(r => r.blockedTicks >= 200);
   const result = summarize("traffic-stress-12robots-20missions", 6000, missions, robots,
     `done=${done}, collisions=${collisions}, physical=${physical}, maxBlocked=${maxBlockedTicks}, deadlock=${permanentDeadlock}`);
-  result.passed = collisions === 0 && physical === 0 && !permanentDeadlock && done >= 10;
+  result.passed = collisions === 0 && physical === 0 && !permanentDeadlock && done === missions.length;
   return result;
 }
 
@@ -2774,7 +2775,9 @@ function runNoEndgameTeleportTest(): TestResult {
 
   // The old final-auto-dock teleported returning robots across the warehouse once the
   // wave completed. No robot may ever move further than a small recovery hop per tick.
-  const maxAllowedHop = 3.5;
+  // One motion step per tick (plus float slack). The old 3.5 m limit tolerated the
+  // docking snap and the multi-metre reverseOneStep teleport.
+  const maxAllowedHop = scenario.robots.speedMetersPerSecond * (scenario.simulation.tickMs / 1000) * 1.02 + 1e-6;
   let maxHop = 0;
   const prev = robots.map(r => ({ ...r.position }));
   let allHomeTick = -1;
@@ -2796,6 +2799,163 @@ function runNoEndgameTeleportTest(): TestResult {
     allHomeTick > 0 &&
     maxHop <= maxAllowedHop;
   return result;
+}
+
+
+/**
+ * Regression: robots used to converge on the single charger dock (capacity 6, one
+ * physical dock point) and trade yields forever. Four drained robots must be served one
+ * at a time from FIFO queue slots, all must charge, and none may touch another.
+ */
+function runChargerQueueFifoTest(): TestResult {
+  const scenario = createDefaultScenario();
+  normalizeScenarioGeometry(scenario);
+  resetCollisionTracking();
+  const slots = generateSlots(scenario);
+  const graph = buildNavigationGraph(scenario);
+  const robots = initRobots(scenario);
+  const charger = scenario.stations.find(s => s.type === "charging")!;
+  const drained = [...robots]
+    .sort((a, b) => Math.hypot(a.homePosition.x - charger.position.x, a.homePosition.z - charger.position.z) -
+      Math.hypot(b.homePosition.x - charger.position.x, b.homePosition.z - charger.position.z))
+    .slice(0, 4);
+  for (const r of drained) r.batteryMinutes = 6;
+  const congestionMap = new Map<string, number>();
+  const charged = new Set<number>();
+  let maxCharging = 0;
+  let maxQueued = 0;
+  let ticks = 9000;
+  for (let tick = 1; tick <= 9000; tick++) {
+    tickRobots(robots, [], slots, scenario, graph, congestionMap, true, tick);
+    const charging = robots.filter(r => r.state === "charging");
+    maxCharging = Math.max(maxCharging, charging.length);
+    for (const r of charging) charged.add(r.id);
+    maxQueued = Math.max(maxQueued, robots.filter(r => r.state === "to-charge").length);
+    if (charged.size === drained.length && robots.every(r => r.state === "idle")) { ticks = tick; break; }
+  }
+  const result = summarize("charger-queue-fifo", ticks, [], robots,
+    `charged=${charged.size}/${drained.length}, maxCharging=${maxCharging}, maxQueued=${maxQueued}, physical=${getPhysicalCollisionCount()}`);
+  result.passed = charged.size === drained.length && maxCharging === 1 && getPhysicalCollisionCount() === 0 &&
+    drained.every(r => r.batteryMinutes >= (scenario.simulation.lowBatteryThreshold ?? 15));
+  return result;
+}
+
+/**
+ * Regression: a robot with battery below the low threshold used to be handed new work
+ * (assignment runs before the tick that sends it to charge), so busy fleets never let it
+ * charge. With a charger present it must not be assigned.
+ */
+function runLowBatteryNotAssignedTest(): TestResult {
+  const scenario = createDefaultScenario();
+  const slots = generateSlots(scenario);
+  const graph = buildNavigationGraph(scenario);
+  const robots = initRobots(scenario).slice(0, 2);
+  robots[0].batteryMinutes = (scenario.simulation.lowBatteryThreshold ?? 15) - 2;
+  const missions = generateMissions(scenario, slots, 2, 0);
+  assignMissions(missions, robots, graph, slots, "nearest-robot", scenario.stations, 4, scenario);
+  const lowRobotAssigned = missions.some(m => m.assignedRobotId === robots[0].id);
+  const result = summarize("low-battery-robot-not-assigned", 0, missions, robots,
+    `floor=${assignmentBatteryFloor(scenario)}, lowRobotAssigned=${lowRobotAssigned}, healthyAssigned=${missions.some(m => m.assignedRobotId === robots[1].id)}`);
+  result.passed = !lowRobotAssigned && missions.some(m => m.assignedRobotId === robots[1].id);
+  return result;
+}
+
+/**
+ * Regression: the station load cap ignored missions in the "picking" phase, so more
+ * missions than the dock + queue could hold were sent to one station.
+ */
+function runStationGateCountsPickingTest(): TestResult {
+  const scenario = createDefaultScenario();
+  const slots = generateSlots(scenario);
+  const graph = buildNavigationGraph(scenario);
+  const robots = initRobots(scenario);
+  const station = scenario.stations.find(s => s.id === "PACK_A")!;
+  const missions = generateMissions(scenario, slots, 10, 0);
+  for (const m of missions) m.targetStationId = station.id;
+  // Pretend dock + queue are already committed: robots in the lifting phase.
+  const busy = missions.slice(0, station.queueCapacity + 1);
+  busy.forEach((m, i) => { m.status = "picking"; m.assignedRobotId = robots[i].id; robots[i].state = "picking"; robots[i].missionId = m.id; });
+  assignMissions(missions, robots, graph, slots, "nearest-robot", scenario.stations, 20, scenario);
+  const extra = missions.filter(m => m.status === "assigned").length;
+  const result = summarize("station-gate-counts-picking", 0, missions, robots, `inFlight=${busy.length}, newlyAssigned=${extra}`);
+  result.passed = extra === 0;
+  return result;
+}
+
+/**
+ * Regression: routes from off-graph positions joined the plain nearest graph node with
+ * a straight segment that could cut through a station bollard or rack corner; the robot
+ * then waited at the obstacle forever and every replan rebuilt the same connector. Every
+ * segment of a planned route must be passable for the robot body (motion clearance).
+ */
+function runPathConnectorsBodyClearTest(): TestResult {
+  const scenario = createDefaultScenario();
+  normalizeScenarioGeometry(scenario);
+  const graph = buildNavigationGraph(scenario);
+  const solids = buildSolidObstacles(scenario);
+  const radius = robotRadius(scenario);
+  const bodyHits = (a: { x: number; z: number }, b: { x: number; z: number }) => {
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.2));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = a.x + (b.x - a.x) * t;
+      const z = a.z + (b.z - a.z) * t;
+      if (solids.some(r => circleIntersectsRect(x, z, radius - 0.02, r))) return true;
+    }
+    return false;
+  };
+  const free = (x: number, z: number) => !solids.some(r => circleIntersectsRect(x, z, radius + 0.02, r));
+  let checked = 0;
+  let bad = 0;
+  const examples: string[] = [];
+  for (const station of scenario.stations) {
+    for (let dx = -6; dx <= 6; dx += 0.75) {
+      for (let dz = -5; dz <= 5; dz += 0.75) {
+        const from = { x: station.position.x + dx, z: station.position.z + dz };
+        if (!free(from.x, from.z)) continue;
+        if (Math.abs(from.x) > scenario.warehouse.width / 2 - radius - 0.3 || Math.abs(from.z) > scenario.warehouse.depth / 2 - radius - 0.3) continue;
+        for (const target of scenario.stations) {
+          if (target.id === station.id) continue;
+          const path = pathToStation(graph, from, target);
+          checked++;
+          for (let i = 1; i < path.length; i++) {
+            if (bodyHits(path[i - 1], path[i])) {
+              bad++;
+              if (examples.length < 3) examples.push(`${station.id}+(${dx},${dz})->${target.id}`);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  const result = summarize("path-connectors-body-clear", 0, [], [], `routes=${checked}, impassable=${bad} ${examples.join(" ")}`);
+  result.passed = checked > 200 && bad === 0;
+  return result;
+}
+
+/**
+ * Regression bundle: the instrumented stress scenarios that reproduced the original
+ * failures (multi-metre teleports, 13 000+ tick deadlocks in 40/60-mission batches, the
+ * charger corner livelock, depot row livelocks). Each must finish every mission, park,
+ * never move faster than one motion step per tick, and never touch another robot.
+ */
+function runReproducedFailureStressTests(): TestResult[] {
+  const names = ["large-batch-12r-40m", "large-fleet-20r-60m", "low-battery-fleet-12r-20m", "single-station-12r-24m-PACK_A", "raw-layout-11-missions"];
+  return names.map(name => {
+    const report = runStressCase(STRESS_CASES.find(c => c.name === name)!);
+    return {
+      name: `stress-${name}`,
+      passed: report.passed,
+      ticks: report.allParkedTick,
+      done: report.done,
+      failed: report.failed,
+      moving: report.missions - report.done,
+      totalDistance: 0,
+      totalWait: 0,
+      details: `${report.failures.join("; ") || "ok"} maxHop=${report.maxHop} stall=${report.maxMissionStallTicks}/${report.maxReturnStallTicks}`,
+    };
+  });
 }
 
 const packAStress = runPackStationStress("PACK_A");
@@ -2887,6 +3047,11 @@ const results: TestResult[] = [
   runRoundTripBoxReturnTest(),
   runChargingDockCycleTest(),
   runNoEndgameTeleportTest(),
+  runChargerQueueFifoTest(),
+  runLowBatteryNotAssignedTest(),
+  runStationGateCountsPickingTest(),
+  runPathConnectorsBodyClearTest(),
+  ...runReproducedFailureStressTests(),
 ];
 
 function countRobotCollisions(robots: RobotRuntime[], minDistance: number): number {

@@ -1,6 +1,6 @@
 import type { NavGraph, NavNode, Vec2, WarehouseScenario, StationConfig, AisleLaneDirection } from "./schema";
 import { computeWarehouseExtents, rackBayBoundaryX } from "./warehouseGenerator";
-import { buildSolidObstacles, isClearSegment, pointInsideSolid, stationApproachPosition } from "./obstacles";
+import { buildSolidObstacles, isClearSegment, pointInsideSolid, stationApproachPosition, type SolidRect } from "./obstacles";
 
 export function buildNavigationGraph(scenario: WarehouseScenario): NavGraph {
   const nodes = new Map<string, NavNode>();
@@ -226,7 +226,18 @@ export type CongestionContext = {
   yieldBayOccupancy: number;
   routeReservations: Map<string, number>;
   aisleDirections: AisleDirectionRange[];
+  /** Positions of robots that will stay put for a while (lifting, queued, charging...). */
+  avoidPoints?: Vec2[];
+  /** Body envelope around an avoid point that an edge must not cross without penalty. */
+  avoidRadius?: number;
 };
+
+/**
+ * Cost of driving an edge through a robot that is not going to move soon. Large enough
+ * that any reasonable detour wins, finite so a route still exists when the stationary
+ * robot is unavoidable (the mover then waits behind it as before).
+ */
+const STATIONARY_ROBOT_PENALTY_METERS = 30;
 
 function edgeCostCongestionAware(from: NavNode, to: NavNode, context: CongestionContext): number {
   const baseDist = heuristic(from.position, to.position);
@@ -260,13 +271,41 @@ function edgeCostCongestionAware(from: NavNode, to: NavNode, context: Congestion
     }
   }
 
-  return baseDist + congestionPenalty + reservationPenalty + stationQueuePenalty + yieldPenalty + lanePenalty;
+  let stationaryPenalty = 0;
+  const avoid = context.avoidPoints;
+  if (avoid && avoid.length > 0) {
+    const r = context.avoidRadius ?? 1.4;
+    for (const p of avoid) {
+      if (segmentPointDistance(p, from.position, to.position) < r) stationaryPenalty += STATIONARY_ROBOT_PENALTY_METERS;
+    }
+  }
+
+  return baseDist + congestionPenalty + reservationPenalty + stationQueuePenalty + yieldPenalty + lanePenalty + stationaryPenalty;
 }
 
-export function aStarCongestionAware(graph: NavGraph, startId: string, goalId: string, context: CongestionContext): Vec2[] {
+function segmentPointDistance(p: Vec2, a: Vec2, b: Vec2): number {
+  const abx = b.x - a.x;
+  const abz = b.z - a.z;
+  const lenSq = abx * abx + abz * abz;
+  if (lenSq <= 1e-9) return Math.hypot(p.x - a.x, p.z - a.z);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.z - a.z) * abz) / lenSq));
+  return Math.hypot(p.x - (a.x + abx * t), p.z - (a.z + abz * t));
+}
+
+export function aStarCongestionAware(graph: NavGraph, startId: string, goalId: string, contextIn: CongestionContext): Vec2[] {
   const start = graph.nodes.get(startId);
   const goal = graph.nodes.get(goalId);
   if (!start || !goal) return [];
+  // A stationary robot at the start (the planner itself, or one it is leaving) or at
+  // the goal penalises every candidate route equally, so it is dropped from the cost.
+  const context = contextIn.avoidPoints && contextIn.avoidPoints.length > 0
+    ? {
+      ...contextIn,
+      avoidPoints: contextIn.avoidPoints.filter(p =>
+        Math.hypot(p.x - start.position.x, p.z - start.position.z) > 1.0 &&
+        Math.hypot(p.x - goal.position.x, p.z - goal.position.z) > 1.0),
+    }
+    : contextIn;
 
   const openSet = new Set<string>([startId]);
   const cameFrom = new Map<string, string>();
@@ -314,75 +353,216 @@ export function aStarCongestionAware(graph: NavGraph, startId: string, goalId: s
   return [{ ...start.position }, { ...goal.position }];
 }
 
+type Planner = ((graph: NavGraph, startId: string, goalId: string) => Vec2[]) & { context?: CongestionContext };
+const plainPlanner: Planner = (graph, startId, goalId) => aStar(graph, startId, goalId);
+const congestionPlanner = (context: CongestionContext): Planner => {
+  const planner: Planner = (graph, startId, goalId) => aStarCongestionAware(graph, startId, goalId, context);
+  planner.context = context;
+  return planner;
+};
+
+/** Stationary robots a direct connector must keep clear of (predictive routing only). */
+function avoidOf(planner: Planner): AvoidSet | undefined {
+  const ctx = planner.context;
+  if (!ctx?.avoidPoints || ctx.avoidPoints.length === 0) return undefined;
+  return { points: ctx.avoidPoints, radius: ctx.avoidRadius ?? 1.4 };
+}
+
+/**
+ * Shared route builder: off-graph start -> graph entry node -> A* -> graph exit node ->
+ * off-graph target. Entry and exit nodes are the nearest ones a robot BODY can actually
+ * reach along an axis-aligned or L-shaped connector (checked with the motion model's
+ * obstacle clearance). Joining simply the nearest node used to produce connectors that
+ * cut through station bollards or rack corners: the robot then waited at the obstacle
+ * forever, and every replan rebuilt the same impassable connector.
+ * `exactTarget` = false keeps the old pick behaviour of ending on the aisle node in front
+ * of a rack slot (the slot itself lies inside the rack).
+ */
+export type AvoidSet = { points: Vec2[]; radius: number };
+
+function routeVia(graph: NavGraph, from: Vec2, target: Vec2, planner: Planner, exactTarget: boolean, avoid?: AvoidSet): Vec2[] {
+  // Short hop with a body-clear straight/L connector (e.g. depot pocket -> own bay):
+  // drive it directly. Via the graph, entry and exit connectors can overlap and turn a
+  // 2 m move into a trip up to the nearest aisle node and back down the same column.
+  if (exactTarget) {
+    const direct = directConnector(graph, from, target, 10, avoidOf(planner) ?? avoid);
+    if (direct) return direct;
+  }
+  const routeStart = dispatchRouteStart(graph, from, target);
+  const entry = findReachableNode(graph, routeStart.start);
+  const exit = exactTarget ? findReachableNode(graph, target) : undefined;
+  const goalId = exit?.id ?? findNearestNodeId(graph.nodes, target);
+  if (!entry || !goalId) return exactTarget ? [from, target] : [from];
+  const nodePath = planner(graph, entry.id, goalId);
+  if (nodePath.length === 0) return exactTarget ? [from, target] : [from];
+  const head = appendUniquePoints(routeStart.prefix, [...entry.connector, ...nodePath]);
+  if (!exactTarget) return head;
+  // exit.connector runs target -> node; drive it in reverse, ending exactly on target.
+  const tail = exit ? [...exit.connector].reverse().slice(1).concat([{ ...target }]) : [{ ...target }];
+  return appendUniquePoints(head, tail);
+}
+
 export function pathToSlot(graph: NavGraph, from: Vec2, slotPos: Vec2): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
-  const goalId = findNearestNodeId(graph.nodes, slotPos);
-  if (!startId || !goalId) return [from, slotPos];
-  const path = aStar(graph, startId, goalId);
-  if (path.length === 0) return [from];
-  return appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path));
+  return routeVia(graph, from, slotPos, plainPlanner, false);
 }
 
-export function pathToStation(graph: NavGraph, from: Vec2, station: StationConfig): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
+export function pathToStation(graph: NavGraph, from: Vec2, station: StationConfig, avoid?: AvoidSet): Vec2[] {
   const approach = graph.scenario ? stationApproachPosition(station, graph.scenario) : station.position;
-  const goalId = findNearestNodeId(graph.nodes, approach);
-  if (!startId || !goalId) return [from, approach];
-  const path = aStar(graph, startId, goalId);
-  if (path.length === 0) return [from, approach];
-  return appendManhattanEndpoint(graph, appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path)), approach);
+  return routeVia(graph, from, approach, plainPlanner, true, avoid);
 }
 
-export function pathToPoint(graph: NavGraph, from: Vec2, target: Vec2): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
-  const goalId = findNearestNodeId(graph.nodes, target);
-  if (!startId || !goalId) return [from, target];
-  const path = aStar(graph, startId, goalId);
-  if (path.length === 0) return [from, target];
-  return appendManhattanEndpoint(graph, appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path)), target);
+/** `avoid`: stationary robots a short direct hop must not cut through (all routing modes). */
+export function pathToPoint(graph: NavGraph, from: Vec2, target: Vec2, avoid?: AvoidSet): Vec2[] {
+  return routeVia(graph, from, target, plainPlanner, true, avoid);
 }
 
 export function pathToSlotPredictive(graph: NavGraph, from: Vec2, slotPos: Vec2, context: CongestionContext): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
-  const goalId = findNearestNodeId(graph.nodes, slotPos);
-  if (!startId || !goalId) return [from, slotPos];
-  const path = aStarCongestionAware(graph, startId, goalId, context);
-  if (path.length === 0) return [from];
-  return appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path));
+  return routeVia(graph, from, slotPos, congestionPlanner(context), false);
 }
 
 export function pathToStationPredictive(graph: NavGraph, from: Vec2, station: StationConfig, context: CongestionContext): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
   const approach = graph.scenario ? stationApproachPosition(station, graph.scenario) : station.position;
-  const goalId = findNearestNodeId(graph.nodes, approach);
-  if (!startId || !goalId) return [from, approach];
-  const path = aStarCongestionAware(graph, startId, goalId, context);
-  if (path.length === 0) return [from, approach];
-  return appendManhattanEndpoint(graph, appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path)), approach);
+  return routeVia(graph, from, approach, congestionPlanner(context), true);
 }
 
 export function pathToPointPredictive(graph: NavGraph, from: Vec2, target: Vec2, context: CongestionContext): Vec2[] {
-  const routeStart = dispatchRouteStart(graph, from);
-  const startId = findNearestNodeId(graph.nodes, routeStart.start);
-  const goalId = findNearestNodeId(graph.nodes, target);
-  if (!startId || !goalId) return [from, target];
-  const path = aStarCongestionAware(graph, startId, goalId, context);
-  if (path.length === 0) return [from, target];
-  return appendManhattanEndpoint(graph, appendUniquePoints(routeStart.prefix, withManhattanEndpoint(graph, routeStart.start, path)), target);
+  return routeVia(graph, from, target, congestionPlanner(context), true);
 }
 
-function dispatchRouteStart(graph: NavGraph, from: Vec2): { start: Vec2; prefix: Vec2[] } {
+type BodyModel = { solids: SolidRect[]; radius: number };
+const bodyModelCache = new WeakMap<NavGraph, BodyModel>();
+
+/** Obstacles exactly as the motion controller checks them (robot disc vs solids). */
+function bodyModel(graph: NavGraph): BodyModel | undefined {
+  if (!graph.scenario) return undefined;
+  let model = bodyModelCache.get(graph);
+  if (!model) {
+    model = {
+      solids: buildSolidObstacles(graph.scenario),
+      radius: Math.max(graph.scenario.robots.footprintWidth, graph.scenario.robots.footprintDepth) / 2,
+    };
+    bodyModelCache.set(graph, model);
+  }
+  return model;
+}
+
+function bodyClearSegment(a: Vec2, b: Vec2, model: BodyModel): boolean {
+  const length = Math.hypot(b.x - a.x, b.z - a.z);
+  const steps = Math.max(1, Math.ceil(length / 0.25));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = a.x + (b.x - a.x) * t;
+    const z = a.z + (b.z - a.z) * t;
+    for (const solid of model.solids) {
+      const cx = Math.max(solid.minX, Math.min(x, solid.maxX));
+      const cz = Math.max(solid.minZ, Math.min(z, solid.maxZ));
+      if (Math.hypot(x - cx, z - cz) < model.radius) return false;
+    }
+  }
+  return true;
+}
+
+function directConnector(
+  graph: NavGraph,
+  from: Vec2,
+  target: Vec2,
+  maxManhattan: number,
+  avoid?: { points: Vec2[]; radius: number }
+): Vec2[] | undefined {
+  const model = bodyModel(graph);
+  if (!model) return undefined;
+  // A short hop must not drive through a parked or working robot (e.g. cut through a
+  // neighbour's depot bay to enter its own bay from the closed side). Robots standing
+  // at the start (the mover itself) or on the target are ignored.
+  const blockers = (avoid?.points ?? []).filter(p =>
+    Math.hypot(p.x - from.x, p.z - from.z) > 0.5 && Math.hypot(p.x - target.x, p.z - target.z) > 0.5);
+  const legClear = (a: Vec2, b: Vec2) =>
+    bodyClearSegment(a, b, model) && blockers.every(p => segmentPointDistance(p, a, b) >= (avoid?.radius ?? 0));
+  if (Math.abs(from.x - target.x) + Math.abs(from.z - target.z) > maxManhattan) return undefined;
+  if (Math.hypot(from.x - target.x, from.z - target.z) <= 0.05) return [{ ...from }, { ...target }];
+  if (Math.abs(from.x - target.x) < 0.05 || Math.abs(from.z - target.z) < 0.05) {
+    return legClear(from, target) ? [{ ...from }, { ...target }] : undefined;
+  }
+  for (const bend of [{ x: target.x, z: from.z }, { x: from.x, z: target.z }]) {
+    if (legClear(from, bend) && legClear(bend, target)) {
+      return [{ ...from }, bend, { ...target }];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Nearest graph node reachable from `pos` by a body-clear axis-aligned segment or a
+ * body-clear L-bend. Returns the connector points (excluding `pos`, ending on the node).
+ * Falls back to the plain nearest node when nothing nearby qualifies.
+ */
+export function findReachableNode(graph: NavGraph, pos: Vec2): { id: string; connector: Vec2[] } | undefined {
+  const model = bodyModel(graph);
+  const nearest = findNearestNodeId(graph.nodes, pos);
+  if (!nearest) return undefined;
+  const nearestNode = graph.nodes.get(nearest)!;
+  if (!model) return { id: nearest, connector: [{ ...nearestNode.position }] };
+
+  const candidates: { id: string; d: number; node: NavNode }[] = [];
+  for (const [id, node] of graph.nodes) {
+    const d = Math.abs(node.position.x - pos.x) + Math.abs(node.position.z - pos.z);
+    if (d <= 14) candidates.push({ id, d, node });
+  }
+  candidates.sort((a, b) => a.d - b.d);
+  for (const { id, node } of candidates.slice(0, 48)) {
+    const p = node.position;
+    if (Math.hypot(p.x - pos.x, p.z - pos.z) <= 0.05) return { id, connector: [{ ...p }] };
+    const axis = Math.abs(p.x - pos.x) < 0.05 || Math.abs(p.z - pos.z) < 0.05;
+    if (axis) {
+      if (bodyClearSegment(pos, p, model)) return { id, connector: [{ ...p }] };
+      continue;
+    }
+    for (const bend of [{ x: p.x, z: pos.z }, { x: pos.x, z: p.z }]) {
+      if (bodyClearSegment(pos, bend, model) && bodyClearSegment(bend, p, model)) {
+        return { id, connector: [bend, { ...p }] };
+      }
+    }
+  }
+  // Boxed-in start (e.g. between a station and its bollards): no straight or L-shaped
+  // connector exists, but a three-leg one does: step back, side-step, then drive to the
+  // node. Tried only when the cheap shapes failed for every candidate.
+  for (const { id, node } of candidates.slice(0, 24)) {
+    const p = node.position;
+    for (const offset of [0.8, -0.8, 1.6, -1.6, 2.4, -2.4]) {
+      const viaZ = [{ x: pos.x, z: pos.z + offset }, { x: p.x, z: pos.z + offset }];
+      const viaX = [{ x: pos.x + offset, z: pos.z }, { x: pos.x + offset, z: p.z }];
+      for (const [m1, m2] of [viaZ, viaX]) {
+        if (bodyClearSegment(pos, m1, model) && bodyClearSegment(m1, m2, model) && bodyClearSegment(m2, p, model)) {
+          return { id, connector: [m1, m2, { ...p }].filter((q, i, arr) => i === 0 || Math.hypot(q.x - arr[i - 1].x, q.z - arr[i - 1].z) > 0.05) };
+        }
+      }
+    }
+  }
+  // Nothing provably reachable nearby (e.g. a robot pinned in a corner): keep the old
+  // Manhattan connector so it still has a route and the traffic resolvers can act.
+  const first = nearestNode.position;
+  const connector: Vec2[] = [];
+  if (Math.abs(pos.x - first.x) > 0.05 && Math.abs(pos.z - first.z) > 0.05) connector.push(chooseClearBend(graph, pos, first));
+  connector.push({ ...first });
+  return { id: nearest, connector };
+}
+
+/**
+ * Launch prefix for routes that leave the front parking band: drive straight out of the
+ * depot (+z) before joining the graph, so departing robots do not weave between bays.
+ * Routes whose destination is itself inside the band (a robot driving back to its bay)
+ * get no prefix: forcing them out of the band first made home-bound robots drive several
+ * metres away from their bay and back down the same column, head-on into the robots
+ * returning behind them.
+ */
+function dispatchRouteStart(graph: NavGraph, from: Vec2, target?: Vec2): { start: Vec2; prefix: Vec2[] } {
   const scenario = graph.scenario;
   if (!scenario) return { start: from, prefix: [from] };
 
   const halfD = scenario.warehouse.depth / 2;
   const parkingBandMaxZ = -halfD + 8.5;
   if (from.z > parkingBandMaxZ) return { start: from, prefix: [from] };
+  if (target && target.z <= parkingBandMaxZ) return { start: from, prefix: [from] };
 
   const solids = buildSolidObstacles(
     scenario,
@@ -404,27 +584,6 @@ function dispatchRouteStart(graph: NavGraph, from: Vec2): { start: Vec2; prefix:
   }
 
   return { start: from, prefix: [from] };
-}
-
-function withManhattanEndpoint(graph: NavGraph, from: Vec2, path: Vec2[]): Vec2[] {
-  if (path.length === 0) return [from];
-  const first = path[0];
-  const result: Vec2[] = [{ ...from }];
-  if (Math.abs(from.x - first.x) > 0.05 && Math.abs(from.z - first.z) > 0.05) {
-    result.push(chooseClearBend(graph, from, first));
-  }
-  return appendUniquePoints(result, path);
-}
-
-function appendManhattanEndpoint(graph: NavGraph, path: Vec2[], target: Vec2): Vec2[] {
-  if (path.length === 0) return [{ ...target }];
-  const last = path[path.length - 1];
-  const extension: Vec2[] = [];
-  if (Math.abs(last.x - target.x) > 0.05 && Math.abs(last.z - target.z) > 0.05) {
-    extension.push(chooseClearBend(graph, last, target));
-  }
-  extension.push({ ...target });
-  return appendUniquePoints(path, extension);
 }
 
 function chooseClearBend(graph: NavGraph, from: Vec2, to: Vec2): Vec2 {
