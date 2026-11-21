@@ -18,9 +18,14 @@ Developed by **Nabil ES-SAADI** for the **BINO project for the Capgemini competi
 
 ---
 
-![BINO simulator showing warehouse racks, robot fleets, packing stations, and the operations map](public/images/warehouse-preview.jpg)
+![BINO simulator workspace showing the 3D warehouse floor, pallet racks, robot fleet, 2D QR-track operations map, telemetry inspector, and competition KPI dock](public/images/simulator-workspace-live.png)
 
-*Actual BINO simulator view showing the 3D warehouse floor, pallet racks, autonomous scissor-lift robot fleet, packing and inbound docks, camera toolbar, and 2D QR-track operations map. All layout and fleet parameters are editable at runtime.*
+*Live BINO simulator workspace (`/simulator/`). Includes the 3D WebGL digital twin, categorized left navigation rail, floating camera & layer toolbar, 2D QR-track operations radar, selected-robot telemetry inspector with battery/lift progress bars, and real-time KPI sidebar.*
+
+| 100vh Project Landing Page (`/`) | Aisle-Level Corridor & Mission Control (`/simulator/`) |
+| --- | --- |
+| ![BINO 100vh desktop landing page showcase](public/images/landing-100vh-preview.png) | ![Aisle-level corridor view and mission dispatch sidebar](public/images/simulator-aisle-inspection.png) |
+| *Single-viewport (`100vh`) responsive landing page with zero Three.js bundle overhead on initial load.* | *Dual-lane picking corridor perspective (`Aisle` camera preset) with reservation-table routing and live mission controls.* |
 
 ---
 
@@ -77,9 +82,9 @@ Warehouse automation involves far more than computing a shortest path for a sing
 | **Analytics & Trace Recording** | Real-time KPIs for mission completion, throughput, average mission time, fleet utilization, travel distance, wait ticks, aisle congestion rankings, physical collision detection, and conflict-avoidance telemetry. |
 | **Multi-Format Exports** | One-click export for **Scenario JSON**, **Inventory CSV**, **Mission Logs**, high-resolution **PNG Screenshots**, **3D Warehouse GLB**, **Gazebo/Ignition SDF**, **Text-to-CAD Prompts**, and recorded **Robot Traces (JSON/CSV)**. |
 
-![Aisle-level view showing QR-track navigation grid, multi-tier storage racks, and mission control sidebar](promo/warehouse-swarm-lab-professional-one-robot-thumbnail.png)
+![3D warehouse viewport with 2D QR-track operations map and selected-robot telemetry inspector](public/images/warehouse-preview.jpg)
 
-*Aisle-level inspection showing the orthogonal QR-track navigation graph, multi-tier rack slots, and real-time mission dispatch controls.*
+*Focused 3D viewport capture showing the warehouse floor, floating camera and overlay controls, interactive 2D QR-track operations map, and the bottom-right robot telemetry inspector.*
 
 ---
 

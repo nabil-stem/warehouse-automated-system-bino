@@ -761,12 +761,12 @@ export function setCameraPreset(
       break;
     case "aisle":
       activeRobotCamera = null;
-      camera.position.set(0, 3, 8);
-      controls.target.set(0, 2, 0);
+      camera.position.set(-28, 3.2, -3.75);
+      controls.target.set(14, 1.8, -3.75);
       break;
     case "top-down":
       activeRobotCamera = null;
-      camera.position.set(0, 60, 0.1);
+      camera.position.set(0, 76, 0.1);
       controls.target.set(0, 0, 0);
       break;
     case "follow":

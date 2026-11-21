@@ -101,6 +101,7 @@ export function createSceneToolbar(workspace: HTMLElement) {
   workspace.appendChild(inspectorEl);
 
   renderToolbar();
+  updateSceneInspector();
 
   onRobotSelected(() => {
     if (cameraMode === "follow" || cameraMode === "robot-camera" || cameraMode === "lift-close") {
@@ -120,6 +121,7 @@ function renderToolbar() {
 
   toolbarEl.innerHTML = `
     <div class="stb-group" role="group" aria-label="Camera views">
+      <span class="stb-group-tag">View</span>
       ${CAMERAS.map(c => `
         <button class="stb-btn ${cameraMode === c.id ? "active" : ""}" data-cam="${c.id}" title="${c.label}">
           <span class="stb-ico">${c.icon}</span><span class="stb-lbl">${c.label}</span>
@@ -128,6 +130,7 @@ function renderToolbar() {
     </div>
     <div class="stb-divider"></div>
     <div class="stb-group" role="group" aria-label="Overlays">
+      <span class="stb-group-tag">Layers</span>
       ${OVERLAYS.map(o => `
         <button class="stb-btn stb-toggle ${overlayActive(o.id) ? "active" : ""}" data-overlay="${o.id}" title="Toggle ${o.label}">
           <span class="stb-ico">${o.icon}</span><span class="stb-lbl">${o.label}</span>
@@ -137,7 +140,7 @@ function renderToolbar() {
     <div class="stb-divider"></div>
     <label class="stb-robot-pick" title="Selected robot">
       <span class="stb-ico">◎</span>
-      <select data-field="selectedRobot">
+      <select data-field="selectedRobot" aria-label="Selected robot">
         ${robots.map(r => `<option value="${r.id}" ${r.id === (sel ?? robots[0]?.id) ? "selected" : ""}>R${String(r.id).padStart(2, "0")}</option>`).join("")}
       </select>
     </label>
@@ -243,11 +246,34 @@ export function updateSceneInspector() {
   const robot = id != null ? state.robots.find(r => r.id === id) : undefined;
 
   if (!robot) {
+    if (inspectorEl.classList.contains("is-empty") && inspectorEl.dataset.robotCount === String(state.robots.length) && inspectorEl.children.length > 0) {
+      return;
+    }
     inspectorEl.classList.add("is-empty");
-    inspectorEl.innerHTML = `<div class="insp-hint">Click a robot in the 3D view to inspect it.</div>`;
+    inspectorEl.dataset.robotCount = String(state.robots.length);
+    const quickRobots = state.robots.slice(0, 4);
+    inspectorEl.innerHTML = `
+      <div class="insp-empty-head">
+        <span class="insp-empty-dot"></span>
+        <span>Robot Telemetry</span>
+      </div>
+      <div class="insp-hint">Click a robot in the 3D view or 2D map to inspect it.</div>
+      ${quickRobots.length > 0 ? `
+        <div class="insp-quick-row">
+          ${quickRobots.map(r => `<button type="button" class="insp-quick-chip" data-quick-robot="${r.id}">R${String(r.id).padStart(2, "0")}</button>`).join("")}
+        </div>
+      ` : ""}
+    `;
+    inspectorEl.onclick = (e) => {
+      const chip = (e.target as HTMLElement).closest("[data-quick-robot]") as HTMLElement;
+      if (chip?.dataset.quickRobot) {
+        setSelectedRobotId(parseInt(chip.dataset.quickRobot, 10));
+      }
+    };
     return;
   }
   inspectorEl.classList.remove("is-empty");
+  inspectorEl.dataset.robotCount = "";
 
   const mission = state.missions.find(m => m.id === robot.missionId);
   const lift = robot.liftTelemetry;
@@ -258,21 +284,33 @@ export function updateSceneInspector() {
   const homeDist = Math.hypot(robot.position.x - robot.homePosition.x, robot.position.z - robot.homePosition.z);
   const clearance = robot.collisionClearanceMeters;
   const homeDocked = homeDist < 0.08 && Math.abs(robot.heading - (robot.homeHeading ?? 0)) < 0.12;
+  const batCap = Math.max(1, state.scenario.robots.batteryCapacityMinutes);
+  const batPct = Math.max(0, Math.min(100, Math.round((robot.batteryMinutes / batCap) * 100)));
 
   inspectorEl.innerHTML = `
     <div class="insp-head">
+      <button class="insp-nav" data-insp="prev" title="Previous robot">‹</button>
       <span class="insp-id">R${String(robot.id).padStart(2, "0")}</span>
+      <button class="insp-nav" data-insp="next" title="Next robot">›</button>
       ${statePill(robot.state)}
       <button class="insp-close" data-insp="close" title="Deselect">×</button>
+    </div>
+    <div class="insp-bars">
+      <div class="insp-bar-item">
+        <div class="insp-bar-lbl"><span>Battery</span><span>${Math.round(robot.batteryMinutes)}m (${batPct}%)</span></div>
+        <div class="insp-bar-track"><div class="insp-bar-fill ${batPct <= 18 ? "fill-warn" : "fill-ok"}" style="width:${batPct}%"></div></div>
+      </div>
+      <div class="insp-bar-item">
+        <div class="insp-bar-lbl"><span>Scissor Lift</span><span>${lift.currentExtensionPct.toFixed(0)}%</span></div>
+        <div class="insp-bar-track"><div class="insp-bar-fill fill-lift" style="width:${Math.min(100, lift.currentExtensionPct)}%"></div></div>
+      </div>
     </div>
     <div class="insp-grid">
       <span>Mission</span><span>${mission ? mission.id : "—"}</span>
       <span>Phase</span><span>${mission?.statusNote ?? robot.state}</span>
-      <span>Battery</span><span>${Math.round(robot.batteryMinutes)} min</span>
       <span>Speed</span><span>${speed.toFixed(2)} m/s</span>
       <span>Payload</span><span class="payload-${lift.payloadState}">${robot.carryingSlotId ? "carrying" : lift.payloadState}</span>
       <span>Lift level</span><span>${lift.payloadState !== "empty" ? "L" + (lift.targetLevel + 1) : "—"}</span>
-      <span>Lift ext.</span><span>${lift.currentExtensionPct.toFixed(0)}%</span>
       <span>Stages</span><span>${lift.activeStages}</span>
       <span>Path left</span><span>${dist.toFixed(1)} m</span>
       <span>ETA</span><span>${eta > 0 ? eta.toFixed(1) + " s" : "—"}</span>
@@ -296,6 +334,14 @@ export function updateSceneInspector() {
     if (!btn) return;
     const act = btn.dataset.insp;
     if (act === "close") { setSelectedRobotId(null); clearRobotCamera(); cameraMode = "overview"; refreshToolbarState(); updateSceneInspector(); return; }
+    if (act === "prev" || act === "next") {
+      const list = state.robots;
+      if (list.length === 0) return;
+      const idx = list.findIndex(r => r.id === robot.id);
+      const nextIdx = act === "next" ? (idx + 1) % list.length : (idx - 1 + list.length) % list.length;
+      setSelectedRobotId(list[nextIdx].id);
+      return;
+    }
     if (act === "follow") applyCamera("follow");
     if (act === "camera") applyCamera("robot-camera");
     if (act === "lift") applyCamera("lift-close");

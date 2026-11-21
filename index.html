@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="author" content="Nabil ES-SAADI" />
   <meta name="description" content="BINO Warehouse Swarm Lab: an interactive 3D warehouse robotics project created by Nabil ES-SAADI for the Capgemini competition. Plan, dispatch, and explore a coordinated robot fleet." />
-  <meta name="theme-color" content="#0b141c" />
+  <meta name="theme-color" content="#080d13" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="BINO — Warehouse Swarm Lab" />
   <meta property="og:locale" content="en_US" />
@@ -29,50 +29,158 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header wrap">
-    <a class="wordmark" href="/" aria-label="BINO home"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>BINO<span class="brand-detail">WAREHOUSE SWARM LAB</span></span></a>
-    <nav aria-label="Main navigation"><a href="#approach">The approach</a><a href="#experience">Explore</a><a href="#project">The project</a></nav>
-    <a class="button button-small button-outline" href="/simulator/">Open simulator</a>
-  </header>
-  <main id="main">
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">BINO PROJECT / WAREHOUSE ROBOTICS</p>
-        <h1 id="hero-title">A warehouse.<br>A swarm.<br><span>One coordinated<br> system.</span></h1>
-        <p class="hero-description">Turn warehouse operations into a world you can explore. Configure the space, dispatch autonomous lift robots, and watch every mission unfold in 3D.</p>
-        <div class="hero-actions"><a class="button button-primary" href="/simulator/">Launch the simulator</a><a class="text-link" href="#approach">Discover the project</a></div>
-        <p class="hero-note">Runs in your browser. No account or installation needed.</p>
+
+  <div class="landing-shell">
+    <header class="site-header wrap">
+      <a class="wordmark" href="/" aria-label="BINO home">
+        <span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>BINO<span class="brand-detail">WAREHOUSE SWARM LAB</span></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#approach">The approach</a>
+        <a href="#experience">First run</a>
+        <a href="#project">The project</a>
+      </nav>
+      <div class="header-actions">
+        <a class="button button-small button-outline" href="/simulator/">Open simulator</a>
       </div>
-      <figure class="hero-visual">
-        <div class="visual-heading"><span>THE WAREHOUSE, IN PERSPECTIVE</span><span>3D SIMULATION</span></div>
-        <img src="/images/warehouse-preview.jpg" alt="Actual BINO simulator showing blue warehouse robots, yellow storage racks, packing stations, and an overhead operations map" width="1476" height="1068" fetchpriority="high" />
-        <figcaption><span>From storage slot to packing station.</span><a href="/simulator/">Take the controls</a></figcaption>
-      </figure>
-    </section>
-    <section class="scenario-strip wrap" aria-labelledby="scenario-title">
-      <div class="strip-label" id="scenario-title">A starting point.<br><span>Make it your own.</span></div>
-      <dl><div><dt>Robot fleet</dt><dd>12 <span>robots</span></dd></div><div><dt>Storage layout</dt><dd>8 <span>rows × 14 bays</span></dd></div><div><dt>Vertical reach</dt><dd>3 <span>shelf levels</span></dd></div></dl>
-      <p>Default scenario values, not performance results. <br>Every one is editable inside the simulator.</p>
-    </section>
-    <section class="approach wrap section-space" id="approach" aria-labelledby="approach-title">
-      <div class="section-intro"><p class="eyebrow">THE APPROACH</p><h2 id="approach-title">Complex operations.<br><span>Visible decisions.</span></h2><p>A robot mission is more than a route. It is a sequence of decisions about space, traffic, lifting, and the next task.</p><a class="text-link" href="/simulator/">Explore the whole system</a></div>
-      <div class="capability-list">
-        <article><div class="capability-label">SPACE</div><div><h3>Build the warehouse around the mission.</h3><p>Adjust rack rows, aisles, shelf levels, inventory, and station positions. See how a different layout changes the world your robots navigate.</p></div></article>
-        <article><div class="capability-label">MOVEMENT</div><div><h3>Watch a fleet find its rhythm.</h3><p>Follow A* routes, traffic reservations, yielding, and station queues. Switch from an overview to a robot camera or a close-up of the scissor lift.</p></div></article>
-        <article><div class="capability-label">INSIGHT</div><div><h3>Understand what happens between tasks.</h3><p>Inspect mission phases, waiting, congestion, throughput, and physical collision counts. Export scenarios and traces to continue your analysis.</p></div></article>
+    </header>
+
+    <main id="main" class="landing-main wrap">
+      <div class="upper-deck">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <div class="hero-badge-row">
+              <span class="status-pill"><span class="status-dot" aria-hidden="true"></span>3D WebGL Digital Twin</span>
+              <span class="eyebrow">BINO PROJECT / WAREHOUSE ROBOTICS</span>
+            </div>
+            <h1 id="hero-title">A warehouse. A swarm.<br><span>One coordinated system.</span></h1>
+            <p class="hero-description">Configure rack geometry, dispatch autonomous scissor-lift robots, and inspect time-expanded traffic reservations, shelf-level picking, charging, and standby parking in real time.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="/simulator/">Launch the simulator</a>
+              <a class="button button-dark" href="/simulator/?demo=jury">Run the jury demo</a>
+            </div>
+            <p class="hero-note">Client-side 3D simulation · No account or installation required.</p>
+          </div>
+
+          <section class="scenario-strip" aria-labelledby="scenario-title">
+            <div class="strip-header">
+              <span class="strip-label" id="scenario-title">Baseline Configuration</span>
+              <span class="strip-tag">Editable at runtime</span>
+            </div>
+            <dl>
+              <div><dt>Robot fleet</dt><dd>12 <span>AMRs</span></dd></div>
+              <div><dt>Storage layout</dt><dd>8 <span>rows × 14 bays</span></dd></div>
+              <div><dt>Vertical reach</dt><dd>3 <span>shelf tiers</span></dd></div>
+              <div><dt>Floor envelope</dt><dd>84×58 <span>meters</span></dd></div>
+            </dl>
+            <p>Default scenario values, not performance results. Every parameter is editable inside the simulator.</p>
+          </section>
+        </section>
+
+        <figure class="hero-visual">
+          <div class="visual-heading">
+            <span class="visual-title"><i aria-hidden="true"></i>LIVE WORKSPACE PREVIEW</span>
+            <span class="visual-tag">3D + 2D QR TRACKS</span>
+          </div>
+          <div class="visual-frame">
+            <img src="/images/warehouse-preview.jpg" alt="Actual BINO simulator showing blue warehouse robots, yellow storage racks, packing stations, and an overhead operations map" width="1476" height="1068" fetchpriority="high" />
+          </div>
+          <figcaption>
+            <span>From multi-tier storage slot to packing station with reservation-table routing.</span>
+            <a class="visual-cta" href="/simulator/">Take the controls</a>
+          </figcaption>
+        </figure>
       </div>
-    </section>
-    <section class="experience" id="experience" aria-labelledby="experience-title">
-      <div class="wrap experience-inner">
-        <div class="experience-heading"><p class="eyebrow">YOUR FIRST RUN</p><h2 id="experience-title">From a quiet floor<br>to a moving system.</h2><p>Start with the built-in scenario, then experiment with the details.</p><a class="button button-dark" href="/simulator/?demo=jury">Run the jury demo</a></div>
-        <div class="run-sequence"><article><span class="sequence-mark" aria-hidden="true"></span><h3>Set the scene</h3><p>Explore the warehouse, its inventory, and the fleet. Keep the default scenario or adjust it to your idea.</p></article><article><span class="sequence-mark" aria-hidden="true"></span><h3>Send the fleet</h3><p>Run the jury demo for an automatic mission batch, or dispatch a specific slot or destination yourself.</p></article><article><span class="sequence-mark" aria-hidden="true"></span><h3>Look closer</h3><p>Follow a robot, inspect its lift and payload, then compare mission progress and traffic in the operations panels.</p></article></div>
+
+      <div class="lower-deck">
+        <section class="deck-card approach" id="approach" aria-labelledby="approach-title">
+          <div class="card-head">
+            <p class="eyebrow">THE APPROACH</p>
+            <h2 id="approach-title">Complex operations. <span>Visible decisions.</span></h2>
+          </div>
+          <div class="capability-list">
+            <article>
+              <div class="capability-label">SPACE</div>
+              <div>
+                <h3>Configurable 3D layout &amp; CAD overlay</h3>
+                <p>Adjust rack rows, bays, levels, aisles, and stations alongside the STEP-derived warehouse model.</p>
+              </div>
+            </article>
+            <article>
+              <div class="capability-label">MOVEMENT</div>
+              <div>
+                <h3>Reservation routing &amp; scissor-lift kinematics</h3>
+                <p>Follow A* paths, dual lanes, yielding, charging docks, and tier-scaled lift extensions.</p>
+              </div>
+            </article>
+            <article>
+              <div class="capability-label">INSIGHT</div>
+              <div>
+                <h3>Telemetry, trace replay &amp; CAD/SDF exports</h3>
+                <p>Track throughput, wait ticks, conflicts avoided, and physical collisions with JSON, CSV, and GLB exports.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="deck-card experience" id="experience" aria-labelledby="experience-title">
+          <div class="card-head">
+            <p class="eyebrow">YOUR FIRST RUN</p>
+            <h2 id="experience-title">From a quiet floor <span>to a moving system.</span></h2>
+          </div>
+          <div class="run-sequence">
+            <article>
+              <span class="sequence-mark" aria-hidden="true">1</span>
+              <div>
+                <h3>Set the scene</h3>
+                <p>Keep the 12-robot reference floor or customize racks, inventory SKU rules, and fleet kinematics.</p>
+              </div>
+            </article>
+            <article>
+              <span class="sequence-mark" aria-hidden="true">2</span>
+              <div>
+                <h3>Send the fleet</h3>
+                <p>Trigger the automated Jury Demo batch or dispatch individual pick-and-drop and point missions.</p>
+              </div>
+            </article>
+            <article>
+              <span class="sequence-mark" aria-hidden="true">3</span>
+              <div>
+                <h3>Look closer</h3>
+                <p>Switch to follow, first-person robot camera, or lift close-up while inspecting live KPIs.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="deck-card project" id="project" aria-labelledby="project-title">
+          <div class="card-head">
+            <p class="eyebrow">BEHIND BINO</p>
+            <h2 id="project-title">An idea you can <span>put in motion.</span></h2>
+          </div>
+          <div class="project-story">
+            <blockquote class="project-lead">
+              <p>“I made this simulator for our BINO project for the Capgemini competition.”</p>
+            </blockquote>
+            <p>BINO makes multi-robot warehouse coordination tangible: a practical environment to test layouts, stress-test traffic algorithms, and demonstrate autonomous fleet behavior.</p>
+            <div class="project-meta">
+              <div>
+                <strong>Nabil ES-SAADI</strong>
+                <span class="project-date">Created June 2026</span>
+              </div>
+              <a class="text-link" href="/simulator/">Explore the whole system</a>
+            </div>
+          </div>
+        </section>
       </div>
-    </section>
-    <section class="project wrap section-space" id="project" aria-labelledby="project-title">
-      <div><p class="eyebrow">BEHIND BINO</p><h2 id="project-title">An idea you can<br><span>put in motion.</span></h2></div>
-      <div class="project-story"><blockquote class="project-lead"><p>“I made this simulator for our BINO project for the Capgemini competition.”</p></blockquote><p>It makes warehouse robot coordination tangible: a space to demonstrate an idea, test a scenario, and explain the decisions behind a moving fleet.</p><p>Created by <strong>Nabil ES-SAADI</strong><br><span class="project-date">June 2026</span></p><a class="button button-primary" href="/simulator/">Experience BINO</a></div>
-    </section>
-  </main>
-  <footer class="site-footer wrap"><a class="footer-name" href="/">BINO <span>/ Warehouse Swarm Lab</span></a><p>Made by Nabil ES-SAADI for our BINO project for the Capgemini competition.<br>Created June 2026 · © 2026 Nabil ES-SAADI</p><a class="text-link" href="/simulator/">Open simulator</a></footer>
+    </main>
+
+    <footer class="site-footer wrap">
+      <a class="footer-name" href="/">BINO <span>/ Warehouse Swarm Lab</span></a>
+      <p>Made by Nabil ES-SAADI for our BINO project for the Capgemini competition. Created June 2026 · © 2026 Nabil ES-SAADI</p>
+      <a class="text-link" href="/simulator/">Open simulator</a>
+    </footer>
+  </div>
 </body>
 </html>

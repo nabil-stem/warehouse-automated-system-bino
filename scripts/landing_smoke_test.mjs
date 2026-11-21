@@ -32,6 +32,8 @@ try {
     await page.setViewportSize({ width, height: 900 });
     const state = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
       imageLoaded: document.querySelector(".hero-visual img").naturalWidth > 0,
       simulatorLoaded: performance.getEntriesByType("resource")
         .some(resource => /\/models\/|\/assets\/simulator-|\/src\/main\.ts/.test(resource.name)),
@@ -46,9 +48,12 @@ try {
     assert.ok(state.defaultsLabelVisible, `Default-values disclaimer hidden at ${width}px`);
     assert.deepEqual(state.smallTargets, [], `Links under 40px tall at ${width}px`);
     assert.ok(state.scrollWidth <= width, `Horizontal overflow at ${width}px`);
+    if (width >= 1440) {
+      assert.ok(state.scrollHeight <= state.innerHeight, `Desktop landing page exceeded 100vh at ${width}x900 (${state.scrollHeight}px > ${state.innerHeight}px)`);
+    }
     assert.ok(state.imageLoaded, "Preview image did not load");
     assert.equal(state.simulatorLoaded, false, "Homepage loaded simulator resources");
-    console.log(`PASS homepage at ${width}px: no overflow, image loaded, simulator deferred`);
+    console.log(`PASS homepage at ${width}px (${state.scrollHeight}px tall): no overflow, image loaded, simulator deferred`);
     if (width === 320) await page.screenshot({ path: "scripts/landing-320.png", fullPage: true });
     if (width === 390) await page.screenshot({ path: "scripts/landing-mobile.png", fullPage: true });
     if (width === 768) await page.screenshot({ path: "scripts/landing-tablet.png", fullPage: true });

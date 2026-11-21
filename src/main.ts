@@ -1,4 +1,4 @@
-import { initState, getState, subscribe, setStatus, setState } from "./app/appState";
+import { initState, getState, subscribe, setStatus, setState, rebuildWorld } from "./app/appState";
 import { initScene, rebuildScene, updateRobots, updateRouteLines, updateHeatmap, updateLaneGeometry, renderFrame, setRobotCamera, setCameraPreset, clearRobotCamera, getSceneState } from "./render/sceneManager";
 import { loadReferenceWarehouseModelFromUrl } from "./render/loaders";
 import { exportScreenshot } from "./render/exporters";
@@ -24,55 +24,80 @@ initState();
 
 const app = document.querySelector<HTMLDivElement>("#root")!;
 app.innerHTML = `
-  <div class="app-shell">
+  <div class="app-shell" id="app-shell">
     <header class="command-bar">
-      <a class="home-link" href="/" title="Back to the BINO project homepage" aria-label="BINO project home"><span aria-hidden="true">←</span> Home</a>
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">◆</span>
-        <div class="brand-text">
-          <span class="brand-name">BINO · Swarm Lab</span>
-          <span class="brand-sub" id="cmd-scenario"></span>
+      <div class="cmd-left">
+        <a class="home-link" href="/" title="Back to the BINO project homepage" aria-label="BINO project home"><span aria-hidden="true">←</span> Home</a>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">◆</span>
+          <div class="brand-text">
+            <span class="brand-name">BINO · Swarm Lab</span>
+            <span class="brand-sub" id="cmd-scenario"></span>
+          </div>
+        </div>
+        <span class="cmd-tick-pill" id="cmd-tick-pill" title="Current simulation tick">T 0</span>
+      </div>
+
+      <div class="cmd-cluster cmd-sim" role="group" aria-label="Simulation playback">
+        <button class="cmd-btn cmd-primary" data-cmd="toggle"><span class="cmd-ico" id="cmd-toggle-ico">▶</span><span id="cmd-toggle-lbl">Start</span></button>
+        <button class="cmd-btn" data-cmd="step" title="Advance one 100 ms tick">⏭ Step</button>
+        <button class="cmd-btn" data-cmd="reset" title="Reset warehouse and fleet to tick 0">↺ Reset</button>
+        <div class="cmd-scale-wrap">
+          <label class="cmd-scale" title="Simulation speed multiplier">
+            <span>Speed</span>
+            <input type="range" data-cmd="scale" min="0.1" max="5" step="0.1" />
+            <span class="cmd-scale-val" id="cmd-scale-val"></span>
+          </label>
+          <div class="cmd-speed-presets" role="group" aria-label="Speed presets">
+            <button type="button" class="speed-chip" data-speed="1">1×</button>
+            <button type="button" class="speed-chip" data-speed="3">3×</button>
+            <button type="button" class="speed-chip" data-speed="5">5×</button>
+          </div>
         </div>
       </div>
-      <div class="cmd-cluster cmd-sim">
-        <button class="cmd-btn cmd-primary" data-cmd="toggle"><span class="cmd-ico" id="cmd-toggle-ico">▶</span><span id="cmd-toggle-lbl">Start</span></button>
-        <button class="cmd-btn" data-cmd="step" title="Advance one tick">⏭ Step</button>
-        <label class="cmd-scale" title="Simulation speed">
-          <span>Speed</span>
-          <input type="range" data-cmd="scale" min="0.1" max="5" step="0.1" />
-          <span class="cmd-scale-val" id="cmd-scale-val"></span>
-        </label>
-      </div>
-      <div class="cmd-cluster cmd-actions">
+
+      <div class="cmd-cluster cmd-actions" role="group" aria-label="Quick actions">
         <button class="cmd-btn" data-cmd="generate" title="Generate a mission batch">✦ Generate</button>
         <button class="cmd-btn cmd-accent" data-cmd="jury" title="Reset and run the jury demo">★ Jury Demo</button>
         <button class="cmd-btn" data-cmd="screenshot" title="Download a PNG of the 3D view">⎙ Screenshot</button>
       </div>
-      <div class="cmd-status">
+
+      <div class="cmd-status" role="status" aria-live="polite">
         <span class="status-dot" id="cmd-dot"></span>
         <span class="status-bar" id="cmd-status">Ready</span>
       </div>
-      <div class="cmd-credit" title="Copyright credit">&copy; Nabil ES-SAADI</div>
+
+      <div class="cmd-credit" title="Created June 2026 for the BINO project (Capgemini competition)">&copy; Nabil ES-SAADI</div>
+      <button class="cmd-btn cmd-drawer-toggle" data-cmd="toggle-drawer" aria-label="Toggle control panel" title="Toggle control sidebar">☰ Panels</button>
     </header>
+
     <div class="app-body">
-      <nav class="nav-rail" id="nav-rail">
-        <button class="tab-btn" data-tab="operations"><span class="nav-ico">◳</span><span class="nav-lbl">Operations</span></button>
-        <button class="tab-btn" data-tab="missions"><span class="nav-ico">▤</span><span class="nav-lbl">Missions</span></button>
-        <button class="tab-btn" data-tab="robots"><span class="nav-ico">◎</span><span class="nav-lbl">Fleet</span></button>
-        <button class="tab-btn" data-tab="layout"><span class="nav-ico">▦</span><span class="nav-lbl">Warehouse</span></button>
-        <button class="tab-btn" data-tab="inventory"><span class="nav-ico">▥</span><span class="nav-lbl">Inventory</span></button>
-        <button class="tab-btn" data-tab="traffic"><span class="nav-ico">⤳</span><span class="nav-lbl">Traffic</span></button>
-        <button class="tab-btn" data-tab="analytics"><span class="nav-ico">▩</span><span class="nav-lbl">Analytics</span></button>
-        <button class="tab-btn" data-tab="export"><span class="nav-ico">⤓</span><span class="nav-lbl">Export</span></button>
-        <button class="tab-btn nav-secondary" data-tab="debug"><span class="nav-ico">⚙</span><span class="nav-lbl">Debug</span></button>
+      <nav class="nav-rail" id="nav-rail" aria-label="Workspace panels">
+        <div class="nav-group-label">Run</div>
+        <button class="tab-btn" data-tab="operations" title="Operations overview (Shortcut: 1)"><span class="nav-ico">◳</span><span class="nav-lbl">Operations</span></button>
+        <button class="tab-btn" data-tab="missions" title="Mission dispatch & queue (Shortcut: 2)"><span class="nav-ico">▤</span><span class="nav-lbl">Missions</span><span class="nav-badge" id="nav-missions-badge" hidden>0</span></button>
+        <button class="tab-btn" data-tab="robots" title="Robot fleet & cameras (Shortcut: 3)"><span class="nav-ico">◎</span><span class="nav-lbl">Fleet</span></button>
+        <div class="nav-group-label">Design</div>
+        <button class="tab-btn" data-tab="layout" title="Warehouse layout & CAD (Shortcut: 4)"><span class="nav-ico">▦</span><span class="nav-lbl">Warehouse</span></button>
+        <button class="tab-btn" data-tab="inventory" title="SKU inventory & slotting (Shortcut: 5)"><span class="nav-ico">▥</span><span class="nav-lbl">Inventory</span></button>
+        <button class="tab-btn" data-tab="traffic" title="Routing, lanes & parking (Shortcut: 6)"><span class="nav-ico">⤳</span><span class="nav-lbl">Traffic</span></button>
+        <div class="nav-group-label">Inspect</div>
+        <button class="tab-btn" data-tab="analytics" title="Throughput & congestion KPIs (Shortcut: 7)"><span class="nav-ico">▩</span><span class="nav-lbl">Analytics</span></button>
+        <button class="tab-btn" data-tab="export" title="Save & export artifacts (Shortcut: 8)"><span class="nav-ico">⤓</span><span class="nav-lbl">Export</span></button>
+        <button class="tab-btn nav-secondary" data-tab="debug" title="Navigation graph & diagnostics (Shortcut: 9)"><span class="nav-ico">⚙</span><span class="nav-lbl">Debug</span></button>
       </nav>
+
       <main class="scene-workspace">
         <section class="viewport" aria-label="3D warehouse swarm simulation"></section>
       </main>
-      <aside class="ops-sidebar">
+
+      <aside class="ops-sidebar" id="ops-sidebar" aria-label="Operations and configuration sidebar">
         <div class="kpi-strip" id="dashboard"></div>
         <div class="sidebar-scroll">
-          <div class="view-title" id="view-title">Operations</div>
+          <div class="view-header">
+            <div class="view-title" id="view-title">Operations</div>
+            <div class="view-subtitle" id="view-subtitle">Live fleet status, quick batch dispatch, and traffic alerts</div>
+          </div>
           <div class="tab-content" id="tab-content"></div>
         </div>
         <div class="competition-area" id="competition-overlay"></div>
@@ -81,29 +106,33 @@ app.innerHTML = `
   </div>
 `;
 
+const appShell = document.getElementById("app-shell")!;
 const mount = document.querySelector<HTMLDivElement>(".viewport")!;
 const workspace = document.querySelector<HTMLElement>(".scene-workspace")!;
 const tabContent = document.getElementById("tab-content")!;
 const dashboardEl = document.getElementById("dashboard")!;
 const competitionEl = document.getElementById("competition-overlay")!;
 const viewTitleEl = document.getElementById("view-title")!;
+const viewSubtitleEl = document.getElementById("view-subtitle")!;
 
 initScene(mount);
 createOperationsMapPanel(mount);
 createSceneToolbar(workspace);
 renderCompetitionOverlay(competitionEl);
 
-const TAB_LABELS: Record<string, string> = {
-  operations: "Operations",
-  missions: "Missions",
-  robots: "Fleet",
-  layout: "Warehouse",
-  inventory: "Inventory",
-  traffic: "Traffic Control",
-  analytics: "Analytics",
-  export: "Export",
-  debug: "Debug & Diagnostics",
+const TAB_META: Record<string, { title: string; subtitle: string }> = {
+  operations: { title: "Operations", subtitle: "Live fleet status, quick batch dispatch, and traffic alerts" },
+  missions: { title: "Missions", subtitle: "Batch generation, routing mode, and manual slot or point dispatch" },
+  robots: { title: "Fleet", subtitle: "Robot kinematics, battery capacity, chassis style, and camera feeds" },
+  layout: { title: "Warehouse", subtitle: "Floor envelope, rack geometry, stations, and CAD reference overlay" },
+  inventory: { title: "Inventory", subtitle: "SKU families, occupancy rates, row rules, and CSV import/export" },
+  traffic: { title: "Traffic Control", subtitle: "Reservation routing, directional aisle lanes, and standby parking" },
+  analytics: { title: "Analytics", subtitle: "Throughput trends, wait times, utilization, and aisle congestion" },
+  export: { title: "Export", subtitle: "Browser storage, Scenario JSON, 3D GLB/SDF models, and trace files" },
+  debug: { title: "Debug & Diagnostics", subtitle: "Navigation graph, solid obstacles, parking bays, and fleet timeline" },
 };
+
+const TAB_ORDER = ["operations", "missions", "robots", "layout", "inventory", "traffic", "analytics", "export", "debug"];
 
 let currentTab = "operations";
 const tabRenderers: Record<string, (el: HTMLElement) => void> = {
@@ -130,8 +159,13 @@ function switchTab(tab: string) {
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.classList.toggle("active", (btn as HTMLElement).dataset.tab === tab);
   });
-  viewTitleEl.textContent = TAB_LABELS[tab] ?? tab;
+  const meta = TAB_META[tab] ?? { title: tab, subtitle: "" };
+  viewTitleEl.textContent = meta.title;
+  viewSubtitleEl.textContent = meta.subtitle;
   tabRenderers[tab]?.(tabContent);
+  if (window.innerWidth <= 1100) {
+    appShell.classList.add("drawer-open");
+  }
 }
 
 document.getElementById("nav-rail")!.addEventListener("click", (e) => {
@@ -139,9 +173,30 @@ document.getElementById("nav-rail")!.addEventListener("click", (e) => {
   if (btn?.dataset.tab) switchTab(btn.dataset.tab);
 });
 
+window.addEventListener("keydown", (e) => {
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key >= "1" && e.key <= "9") {
+    const idx = parseInt(e.key, 10) - 1;
+    if (TAB_ORDER[idx]) {
+      e.preventDefault();
+      switchTab(TAB_ORDER[idx]);
+    }
+  }
+});
+
 // --- Command bar wiring ---
 const commandBar = document.querySelector<HTMLElement>(".command-bar")!;
 commandBar.addEventListener("click", (e) => {
+  const speedBtn = (e.target as HTMLElement).closest("[data-speed]") as HTMLElement;
+  if (speedBtn) {
+    const val = parseFloat(speedBtn.dataset.speed || "1");
+    getState().scenario.simulation.timeScale = val;
+    updateCommandBar();
+    setStatus(`Simulation speed set to ${val.toFixed(1)}x`);
+    return;
+  }
+
   const btn = (e.target as HTMLElement).closest("[data-cmd]") as HTMLElement;
   if (!btn) return;
   const state = getState();
@@ -153,6 +208,9 @@ commandBar.addEventListener("click", (e) => {
     setState({ running: false });
     (window as any).__simStep = true;
     setStatus("Stepped 1 tick");
+  } else if (cmd === "reset") {
+    rebuildWorld();
+    setStatus("Simulation reset to tick 0");
   } else if (cmd === "generate") {
     if (state.missions.length === 0 || state.missions.every(m => m.status === "done" || m.status === "failed")) {
       resetCollisionTracking();
@@ -176,6 +234,8 @@ commandBar.addEventListener("click", (e) => {
       exportScreenshot(ss.renderer, `warehouse-screenshot-${Date.now()}.png`);
       setStatus("Screenshot exported");
     }
+  } else if (cmd === "toggle-drawer") {
+    appShell.classList.toggle("drawer-open");
   }
 });
 
@@ -205,8 +265,27 @@ function updateCommandBar() {
   toggleBtn.classList.toggle("cmd-running", running);
 
   document.getElementById("cmd-scenario")!.textContent = state.scenario.name;
-  document.getElementById("cmd-scale-val")!.textContent = `${state.scenario.simulation.timeScale.toFixed(1)}x`;
-  if (document.activeElement !== scaleInput) scaleInput.value = String(state.scenario.simulation.timeScale);
+  const ts = state.scenario.simulation.timeScale;
+  document.getElementById("cmd-scale-val")!.textContent = `${ts.toFixed(1)}x`;
+  if (document.activeElement !== scaleInput) scaleInput.value = String(ts);
+
+  commandBar.querySelectorAll<HTMLElement>("[data-speed]").forEach(chip => {
+    chip.classList.toggle("active", Math.abs(parseFloat(chip.dataset.speed || "0") - ts) < 0.05);
+  });
+
+  const tickPill = document.getElementById("cmd-tick-pill");
+  if (tickPill) tickPill.textContent = `T ${state.tick}`;
+
+  const missionBadge = document.getElementById("nav-missions-badge");
+  if (missionBadge) {
+    const activeCount = state.missions.filter(m => m.status !== "done" && m.status !== "failed").length;
+    if (activeCount > 0) {
+      missionBadge.hidden = false;
+      missionBadge.textContent = String(activeCount);
+    } else {
+      missionBadge.hidden = true;
+    }
+  }
 
   const statusEl = document.getElementById("cmd-status")!;
   statusEl.textContent = state.statusMessage;
@@ -251,6 +330,7 @@ updateLaneGeometry(bootState.scenario, bootState.robots);
 renderDashboard(dashboardEl, bootState.metrics, bootState.statusMessage);
 updateCommandBar();
 switchTab("operations");
+appShell.classList.remove("drawer-open");
 installPromoControlApi();
 void loadBuiltInReferenceModel().finally(() => {
   if (new URLSearchParams(window.location.search).get("demo") === "jury") {

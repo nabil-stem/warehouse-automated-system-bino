@@ -1,6 +1,8 @@
 import type { WarehouseScenario, RobotRuntime, Slot, NavGraph, Mission, SimMetrics } from "../domain/schema";
 import { computeWarehouseExtents, rackBayBoundaryX } from "../domain/warehouseGenerator";
 import { getRobotColor } from "../render/materials";
+import { getState, setStatus } from "../app/appState";
+import { setSelectedRobotId, getSelectedRobotId } from "../render/sceneManager";
 
 let mapCanvas: HTMLCanvasElement | null = null;
 let mapContainer: HTMLElement | null = null;
@@ -39,6 +41,36 @@ export function createOperationsMapPanel(viewport: HTMLElement): HTMLElement {
   const modeSelect = mapContainer.querySelector(".ops-map-mode") as HTMLSelectElement;
   modeSelect.addEventListener("change", () => {
     (mapContainer as any).__mapMode = modeSelect.value;
+  });
+
+  mapCanvas.addEventListener("click", (e) => {
+    if (!mapCanvas) return;
+    const rect = mapCanvas.getBoundingClientRect();
+    const clickX = ((e.clientX - rect.left) / Math.max(1, rect.width)) * mapCanvas.width;
+    const clickY = ((e.clientY - rect.top) / Math.max(1, rect.height)) * mapCanvas.height;
+    const state = getState();
+    const ww = state.scenario.warehouse.width;
+    const wd = state.scenario.warehouse.depth;
+    const padding = 12;
+    const scale = Math.min((mapCanvas.width - padding * 2) / ww, (mapCanvas.height - padding * 2) / wd);
+    const offsetX = (mapCanvas.width - ww * scale) / 2;
+    const offsetZ = (mapCanvas.height - wd * scale) / 2;
+    const toX = (x: number) => offsetX + (x + ww / 2) * scale;
+    const toZ = (z: number) => offsetZ + (z + wd / 2) * scale;
+
+    let best: RobotRuntime | null = null;
+    let bestDist = 14;
+    for (const r of state.robots) {
+      const d = Math.hypot(toX(r.position.x) - clickX, toZ(r.position.z) - clickY);
+      if (d < bestDist) {
+        bestDist = d;
+        best = r;
+      }
+    }
+    if (best) {
+      setSelectedRobotId(best.id);
+      setStatus(`Selected R${String(best.id).padStart(2, "0")} from Operations Map`);
+    }
   });
 
   return mapContainer;
@@ -155,10 +187,19 @@ export function updateOperationsMap(
     drawMissionRoutes(ctx, robots, missions, toX, toZ);
   }
 
+  const selectedId = getSelectedRobotId();
   for (const robot of robots) {
     const color = getRobotColor(robot.id);
     const rx = toX(robot.position.x);
     const rz = toZ(robot.position.z);
+
+    if (robot.id === selectedId) {
+      ctx.strokeStyle = qrMode ? "#0891b2" : "#38e2c7";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(rx, rz, Math.max(5.5, scale * 1.15), 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     if (robot.state === "idle") {
       ctx.fillStyle = qrMode ? "#111" : "rgba(100,100,100,0.8)";

@@ -16,6 +16,7 @@ export type JuryVerdict = {
 
 let juryDemoRunning = false;
 let juryVerdict: JuryVerdict | null = null;
+let compCollapsed = false;
 
 export function getJuryDemoRunning(): boolean {
   return juryDemoRunning;
@@ -34,7 +35,6 @@ export function renderCompetitionOverlay(container: HTMLElement) {
   const failedMissions = missions.filter(m => m.status === "failed").length;
 
   const parkedRobots = robots.filter(r => r.state === "idle" || r.state === "charging").length;
-  const activeRobots = robots.filter(r => r.state !== "idle" && r.state !== "charging").length;
 
   const allDone = totalMissions > 0 && doneMissions === totalMissions;
   const allParked = robots.every(r => r.state === "idle" || r.state === "charging");
@@ -48,10 +48,15 @@ export function renderCompetitionOverlay(container: HTMLElement) {
   const robotStates = getRobotStateBreakdown(robots);
 
   container.innerHTML = `
-    <div class="competition-panel">
+    <div class="competition-panel ${compCollapsed ? "is-collapsed" : ""}">
       <div class="comp-header">
-        <span class="comp-title">Competition Mode</span>
-        <span class="comp-tick">Tick ${state.tick}</span>
+        <div class="comp-header-left">
+          <span class="comp-title">Competition Mode</span>
+          <span class="comp-tick">Tick ${state.tick}</span>
+        </div>
+        <button type="button" class="comp-collapse-btn" data-action="toggle-comp" title="${compCollapsed ? "Expand competition panel" : "Minimize competition panel"}" aria-expanded="${!compCollapsed}">
+          ${compCollapsed ? "▴ Expand" : "▾ Minimize"}
+        </button>
       </div>
 
       <div class="comp-final-state ${allDone && allParked ? 'comp-success' : totalMissions > 0 ? 'comp-running' : 'comp-idle'}">
@@ -89,41 +94,47 @@ export function renderCompetitionOverlay(container: HTMLElement) {
         </div>
       </div>
 
-      <div class="comp-details">
-        <div class="comp-detail-row"><span>Avg wait time</span><span>${metrics.avgWaitTime.toFixed(1)} ticks</span></div>
-        <div class="comp-detail-row"><span>Route efficiency</span><span>${(metrics.routeEfficiency * 100).toFixed(1)}%</span></div>
-        <div class="comp-detail-row"><span>Bottleneck aisle</span><span>${metrics.topCongestedAisle}</span></div>
-        <div class="comp-detail-row"><span>Parking status</span><span>${occupiedBays}/${parkingBays.length} bays</span></div>
-        <div class="comp-detail-row"><span>Active missions</span><span>${activeMissions}/${effectiveActiveLimit}</span></div>
-        <div class="comp-detail-row"><span>Queued</span><span>${queuedMissions}</span></div>
-        <div class="comp-detail-row"><span>Failed</span><span class="${failedMissions > 0 ? 'comp-danger' : ''}">${failedMissions}</span></div>
-      </div>
-
-      <div class="comp-robot-states">
-        <span class="comp-state-label">Robot States:</span>
-        <div class="comp-state-pills">
-          ${robotStates.map(s => `<span class="comp-pill comp-pill-${s.cls}">${s.label} ${s.count}</span>`).join('')}
+      <div class="comp-collapsible-body" ${compCollapsed ? "hidden" : ""}>
+        <div class="comp-details">
+          <div class="comp-detail-row"><span>Avg wait time</span><span>${metrics.avgWaitTime.toFixed(1)} ticks</span></div>
+          <div class="comp-detail-row"><span>Route efficiency</span><span>${(metrics.routeEfficiency * 100).toFixed(1)}%</span></div>
+          <div class="comp-detail-row"><span>Bottleneck aisle</span><span>${metrics.topCongestedAisle}</span></div>
+          <div class="comp-detail-row"><span>Parking status</span><span>${occupiedBays}/${parkingBays.length} bays</span></div>
+          <div class="comp-detail-row"><span>Active missions</span><span>${activeMissions}/${effectiveActiveLimit}</span></div>
+          <div class="comp-detail-row"><span>Queued</span><span>${queuedMissions}</span></div>
+          <div class="comp-detail-row"><span>Failed</span><span class="${failedMissions > 0 ? 'comp-danger' : ''}">${failedMissions}</span></div>
         </div>
-      </div>
 
-      ${juryVerdict ? renderVerdictCard(juryVerdict) : ''}
+        <div class="comp-robot-states">
+          <span class="comp-state-label">Robot States:</span>
+          <div class="comp-state-pills">
+            ${robotStates.map(s => `<span class="comp-pill comp-pill-${s.cls}">${s.label} ${s.count}</span>`).join('')}
+          </div>
+        </div>
 
-      <div class="comp-actions">
-        <button class="btn btn-primary comp-btn" data-action="jury-demo" ${juryDemoRunning ? 'disabled' : ''}>
-          ${juryDemoRunning ? 'Demo Running...' : 'Reset + Run Jury Demo'}
-        </button>
-        <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px;cursor:pointer">
-          <input type="checkbox" data-action="toggle-charging" ${(state.scenario.simulation.juryChargingShowcase ?? true) ? 'checked' : ''} />
-          Charging showcase (one robot docks at the charger during the demo)
-        </label>
-        <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:4px;cursor:pointer">
-          <input type="checkbox" data-action="toggle-roundtrip" ${(state.scenario.simulation.returnBoxesToShelf ?? false) ? 'checked' : ''} />
-          Operator round-trip (picked boxes return to their shelf)
-        </label>
+        ${juryVerdict ? renderVerdictCard(juryVerdict) : ''}
+
+        <div class="comp-actions">
+          <button class="btn btn-primary comp-btn" data-action="jury-demo" ${juryDemoRunning ? 'disabled' : ''}>
+            ${juryDemoRunning ? 'Demo Running...' : 'Reset + Run Jury Demo'}
+          </button>
+          <label class="comp-check-label">
+            <input type="checkbox" data-action="toggle-charging" ${(state.scenario.simulation.juryChargingShowcase ?? true) ? 'checked' : ''} />
+            <span>Charging showcase (one robot docks at charger)</span>
+          </label>
+          <label class="comp-check-label">
+            <input type="checkbox" data-action="toggle-roundtrip" ${(state.scenario.simulation.returnBoxesToShelf ?? false) ? 'checked' : ''} />
+            <span>Operator round-trip (return totes to shelf)</span>
+          </label>
+        </div>
       </div>
     </div>
   `;
 
+  container.querySelector('[data-action="toggle-comp"]')?.addEventListener('click', () => {
+    compCollapsed = !compCollapsed;
+    renderCompetitionOverlay(container);
+  });
   container.querySelector('[data-action="jury-demo"]')?.addEventListener('click', () => {
     startJuryDemo();
   });
@@ -203,10 +214,6 @@ export function startJuryDemo() {
   state.scenario.simulation.parkingStrategy = "home-slots";
   state.scenario.simulation.timeScale = 3.0;
 
-  // Charging showcase: the robot parked closest to the charging dock starts with a
-  // nearly empty battery, so it visibly drives to the charger, docks and charges
-  // (yellow status light + CHG state) while the fleet runs the missions, then
-  // undocks and returns to its home bay.
   if (state.scenario.simulation.juryChargingShowcase ?? true) {
     const charger = state.scenario.stations.find(s => s.type === "charging");
     if (charger) {
@@ -215,7 +222,7 @@ export function startJuryDemo() {
         Math.hypot(b.homePosition.x - charger.position.x, b.homePosition.z - charger.position.z)
       )[0];
       if (showcase) {
-        showcase.batteryMinutes = 4.5; // below the assignable threshold -> heads to charger
+        showcase.batteryMinutes = 4.5;
       }
     }
   }
