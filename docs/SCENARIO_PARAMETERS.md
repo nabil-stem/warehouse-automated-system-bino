@@ -1,188 +1,187 @@
 # Scenario Parameters Reference
 
-All parameters are fields of the `WarehouseScenario` object. Edit them via the sidebar tabs or by importing a JSON scenario file.
+All parameters are fields of the `WarehouseScenario` object defined in [`src/domain/schema.ts`](../src/domain/schema.ts), with baseline defaults configured in [`src/app/defaultScenario.ts`](../src/app/defaultScenario.ts). Edit them live via the simulator sidebar panels or by importing a JSON scenario file.
 
 ## Top-Level
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | string | Scenario display name |
-| `seed` | number | Random seed for deterministic mission/inventory generation |
-| `units` | `"meters"` | All dimensions are in meters |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `1` | `1` | Schema version identifier |
+| `name` | `string` | `"Warehouse Swarm Lab"` | Scenario display name |
+| `seed` | `number` | `42` | Random seed for deterministic mission and inventory generation |
+| `units` | `"meters"` | `"meters"` | All spatial dimensions are expressed in meters |
 
-## `warehouse` — Floor Dimensions
+## `warehouse` — Floor & Envelope Dimensions
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `width` | number | 60 | Floor width (X axis) in meters |
-| `depth` | number | 40 | Floor depth (Z axis) in meters |
-| `floorThickness` | number | 0.15 | Concrete slab thickness |
-| `wallHeight` | number | 10 | Perimeter wall height (when shown) |
-| `showWalls` | boolean | false | Render perimeter walls |
-| `gridSpacing` | number | 1 | Navigation grid cell size |
+| `width` | `number` | `84` | Floor width (X axis) in meters before geometry normalization |
+| `depth` | `number` | `58` | Floor depth (Z axis) in meters before geometry normalization |
+| `floorThickness` | `number` | `0.2` | Concrete slab thickness in meters |
+| `wallHeight` | `number` | `8` | Perimeter wall height (when shown) |
+| `showWalls` | `boolean` | `true` | Render perimeter walls |
+| `showRoof` | `boolean` | `true` | Render overhead roof structure |
+| `gridSpacing` | `number` | `4` | Visual floor grid cell spacing in meters |
 
-## `racks` — Rack Layout
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `rowCount` | number | 12 | Number of rack rows |
-| `baysPerRow` | number | 14 | Bays per row |
-| `levels` | number | 3 | Shelf levels per bay |
-| `bayWidth` | number | 1.2 | Width of each bay in meters |
-| `shelfDepth` | number | 1.0 | Depth of each shelf |
-| `levelHeight` | number | 1.5 | Vertical spacing between levels |
-| `bottomShelfHeight` | number | 0.3 | Height of the lowest shelf above floor |
-| `rowPitch` | number | 3.8 | Center-to-center distance between rows |
-| `aisleWidth` | number | 1.8 | Width of picking aisles between rows |
-| `mainAisleWidth` | number | 3.0 | Width of main cross-aisles |
-| `crossAisleEveryBays` | number | 7 | Insert a cross-aisle every N bays |
-| `crossAisleWidth` | number | 2.0 | Width of cross-aisles |
-| `rackBeamThickness` | number | 0.06 | Beam member thickness |
-| `uprightThickness` | number | 0.08 | Upright member thickness |
-
-## `boxes` — Box/Tote Dimensions
+## `racks` — Storage Rack Layout
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `width` | number | 0.4 | Box width |
-| `height` | number | 0.25 | Box height |
-| `depth` | number | 0.3 | Box depth |
-| `defaultFillRate` | number | 0.8 | Fraction of slots filled (0–1) |
-| `maxStackPerSlot` | number | 2 | Max boxes per slot |
+| `rowCount` | `number` | `8` | Number of rack rows |
+| `baysPerRow` | `number` | `14` | Bays per row |
+| `levels` | `number` | `3` | Vertical shelf levels per bay |
+| `bayWidth` | `number` | `3.2` | Width of each bay in meters |
+| `shelfDepth` | `number` | `1.3` | Depth of each shelf in meters |
+| `levelHeight` | `number` | `1.4` | Vertical spacing between shelf levels in meters |
+| `bottomShelfHeight` | `number` | `1.2` | Height of the lowest shelf above the floor in meters |
+| `rowPitch` | `number` | `7.5` | Center-to-center distance between rack row pairs in meters |
+| `aisleWidth` | `number` | `4.2` | Nominal picking aisle width parameter in meters |
+| `mainAisleWidth` | `number` | `6.0` | Width of main front/rear cross-corridors in meters |
+| `crossAisleEveryBays` | `number` | `4` | Insert a transverse cross-aisle every `N` bays |
+| `crossAisleWidth` | `number` | `3.0` | Width of transverse cross-aisles in meters |
+| `rackBeamThickness` | `number` | `0.22` | Horizontal beam member thickness in meters |
+| `uprightThickness` | `number` | `0.16` | Vertical upright column thickness in meters |
+
+## `boxes` — Box / Tote Dimensions
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `width` | `number` | `1.2` | Box width in meters |
+| `height` | `number` | `0.7` | Box height in meters |
+| `depth` | `number` | `0.8` | Box depth in meters |
+| `defaultFillRate` | `number` | `0.78` | Default fraction of storage slots occupied (`0`–`1`) |
+| `maxStackPerSlot` | `number` | `1` | Maximum stacked boxes per storage slot |
 
 ## `inventory` — Inventory Generation
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `skuFamilies` | string[] | List of SKU family names for generation |
-| `rowRules` | RowInventoryRule[] | Per-row overrides (see below) |
-| `hotSkuPercentage` | number | Fraction of SKUs marked high-demand (0–1) |
-| `emptySlotPercentage` | number | Fraction of slots left empty (0–1) |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skuFamilies` | `string[]` | `["A14", "B22", "C05", "D73", "E18", "F41", "G09", "H66", "J31"]` | SKU family identifiers used during slot population |
+| `rowRules` | `RowInventoryRule[]` | `[]` | Per-row slotting overrides (see below) |
+| `hotSkuPercentage` | `number` | `15` | Percentage of SKUs marked high-demand (`0`–`100`) |
+| `emptySlotPercentage` | `number` | `22` | Percentage of slots left empty (`0`–`100`) |
 
 ### `RowInventoryRule`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `rowIndex` | number | Which row (0-based) this rule applies to |
-| `fillRate` | number | Override fill rate for this row |
-| `boxesPerBay` | number? | Override boxes per bay |
-| `skuFamilies` | string[]? | Restrict SKU families for this row |
+| `rowIndex` | `number` | Target row index (`0`-based) |
+| `fillRate` | `number` | Override occupancy fraction for this row (`0`–`1`) |
+| `boxesPerBay` | `number?` | Optional override for boxes per bay |
+| `skuFamilies` | `string[]?` | Optional subset of SKU families permitted in this row |
 
-## `visual` — Rendering Options
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `rackStyle` | `"shelf"` \| `"pallet"` \| `"bin-wall"` | `"shelf"` | Rack visual style |
-| `boxStyle` | `"cartons"` \| `"totes"` | `"cartons"` | Box visual style |
-| `polishedFloor` | boolean | true | Reflective floor material |
-| `showHazardLanes` | boolean | true | Yellow hazard lane markings |
-| `showOverheadStructure` | boolean | true | Ceiling beams and lights |
-| `showRackBracing` | boolean | true | Diagonal bracing on racks |
-| `showBinFaces` | boolean | true | Front faces on bin-wall racks |
-| `showSupportColumns` | boolean | true | Structural columns |
-| `showDockDoors` | boolean | true | Loading dock doors |
-| `showSafetyBollards` | boolean | true | Safety bollards at row ends |
-| `showFloorTrafficMarks` | boolean | true | Floor arrows and markings |
-| `showPallets` | boolean | true | Pallet meshes under boxes |
-| `referenceModelScale` | number | 1.0 | Scale of the reference GLB model |
-| `referenceModelUrl` | string? | — | URL to auto-load a GLB reference model |
-| `referenceModelOpacity` | number | 0.5 | Opacity of the reference model overlay |
-| `showProceduralUnderReference` | boolean | false | Show procedural geometry under the reference model |
-
-## `robots` — Robot Fleet
+## `visual` — Rendering & CAD Overlay Options
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `count` | number | 12 | Number of robots |
-| `speedMetersPerSecond` | number | 1.5 | Movement speed |
-| `turnSpeedRadPerSecond` | number | 3.0 | Turning speed |
-| `footprintWidth` | number | 0.6 | Robot body width |
-| `footprintDepth` | number | 0.8 | Robot body depth |
-| `bodyHeight` | number | 0.3 | Robot body height |
-| `liftMaxHeight` | number | 3.5 | Maximum lift extension height |
-| `batteryCapacityMinutes` | number | 480 | Battery capacity in simulated minutes |
-| `visualType` | string | `"scissor-lift"` | One of: `compact-lift`, `stacker-amr`, `tote-carrier`, `scissor-lift` |
-| `showMast` | boolean | true | Show vertical mast on robot |
-| `useCustomModel` | boolean | false | Use uploaded custom model |
-| `customModelUrl` | string? | — | URL to custom robot GLB |
-| `customModelScale` | number | 1.0 | Scale for custom model |
+| `rackStyle` | `"shelf"` \| `"pallet"` \| `"bin-wall"` | `"pallet"` | Rack structural style |
+| `boxStyle` | `"cartons"` \| `"totes"` | `"totes"` | Payload container style |
+| `polishedFloor` | `boolean` | `true` | Reflective industrial floor material |
+| `showHazardLanes` | `boolean` | `true` | Yellow hazard lane markings |
+| `showOverheadStructure` | `boolean` | `true` | Ceiling trusses and lighting fixtures |
+| `showRackBracing` | `boolean` | `true` | Diagonal structural bracing on racks |
+| `showBinFaces` | `boolean` | `true` | Front faces on bin-wall racks |
+| `showSupportColumns` | `boolean` | `false` | Structural columns (disabled by default to avoid blocking custom narrow aisles) |
+| `showDockDoors` | `boolean` | `true` | Loading dock doors along the perimeter |
+| `showSafetyBollards` | `boolean` | `true` | Protective yellow bollards at rack row ends and stations |
+| `showFloorTrafficMarks` | `boolean` | `false` | Painted floor arrows and lane markings |
+| `showPallets` | `boolean` | `true` | Pallet meshes beneath stored boxes |
+| `referenceModelScale` | `number` | `22` | Scale factor for the reference `.glb` CAD overlay |
+| `referenceModelUrl` | `string?` | `"/models/warehouse-from-step.glb"` | URL of the auto-loaded `.glb` reference warehouse model |
+| `referenceModelOpacity` | `number` | `0.42` | Opacity of the reference CAD model overlay (`0`–`1`) |
+| `showProceduralUnderReference` | `boolean` | `true` | Render procedural warehouse geometry alongside the reference model |
 
-## `stations[]` — Work Stations
+## `robots` — Autonomous Robot Fleet
 
-Each entry in the `stations` array:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `count` | `number` | `12` | Total number of robots in the fleet |
+| `speedMetersPerSecond` | `number` | `2.0` | Maximum linear travel speed in `m/s` |
+| `turnSpeedRadPerSecond` | `number` | `3.0` | Angular turning rate in `rad/s` |
+| `maxAccelerationMps2` | `number?` | `5.5` | Maximum linear acceleration in `m/s²` |
+| `maxDecelerationMps2` | `number?` | `6.5` | Maximum braking deceleration in `m/s²` |
+| `footprintWidth` | `number` | `1.2` | Robot chassis width in meters |
+| `footprintDepth` | `number` | `1.0` | Robot chassis depth in meters |
+| `bodyHeight` | `number` | `0.65` | Robot chassis base height in meters |
+| `liftMaxHeight` | `number` | `4.0` | Maximum vertical reach of the scissor lift in meters |
+| `batteryCapacityMinutes` | `number` | `120` | Full battery capacity in simulated minutes |
+| `visualType` | `"compact-lift"` \| `"stacker-amr"` \| `"tote-carrier"` \| `"scissor-lift"` | `"scissor-lift"` | 3D robot chassis visual model |
+| `showMast` | `boolean` | `true` | Render vertical stabilization mast on the robot |
+| `useCustomModel` | `boolean` | `false` | Replace procedural robot mesh with a custom uploaded `.glb` |
+| `customModelUrl` | `string?` | — | Object URL or path to custom robot `.glb` |
+| `customModelScale` | `number` | `1.0` | Scale multiplier for custom robot `.glb` |
+
+## `stations[]` — Operational Work Stations
+
+Default stations: `PACK_A` (`-20, -22`), `PACK_B` (`20, -22`), `INBOUND` (`0, 22`), and `CHARGE_A` (`-30, 24`).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique station identifier |
-| `type` | `"packing"` \| `"inbound"` \| `"charging"` \| `"buffer"` | Station purpose |
-| `label` | string | Display label |
-| `position` | `{ x, z }` | World position in meters |
-| `width` | number | Station width |
-| `depth` | number | Station depth |
-| `capacity` | number | Max items at station |
-| `queueCapacity` | number | Max concurrent missions targeting this station |
+| `id` | `string` | Unique station identifier |
+| `type` | `"packing"` \| `"inbound"` \| `"charging"` \| `"buffer"` | Functional station role |
+| `label` | `string` | Human-readable label shown in UI and 3D badges |
+| `position` | `{ x: number, z: number }` | World coordinates on the warehouse floor in meters |
+| `width` | `number` | Station footprint width in meters |
+| `depth` | `number` | Station footprint depth in meters |
+| `capacity` | `number` | Maximum item capacity at the station |
+| `queueCapacity` | `number` | Maximum concurrent robots queued/serviced at this station |
 
-## `simulation` — Simulation Config
+## `simulation` — Simulation & Coordination Engine
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `tickMs` | number | 100 | Milliseconds per simulation tick |
-| `timeScale` | number | 1.0 | Simulation speed multiplier (0.1–5.0) |
-| `missionCount` | number | 10 | Number of missions to generate per batch |
-| `routing` | string | `"a-star"` | `direct`, `a-star`, or `reservation-table` |
-| `allocator` | string | `"nearest-robot"` | `round-robin`, `nearest-robot`, or `least-busy` |
-| `collisionAvoidance` | boolean | true | Enable predictive collision avoidance |
-| `showRoutes` | boolean | true | Render robot route lines |
-| `showHeatmap` | boolean | false | Render aisle congestion heatmap |
-| `showOperationsMap` | boolean | true | Show 2D operations map overlay |
-| `operationsMapMode` | string | `"qr-track"` | `layout`, `traffic`, `missions`, `congestion`, `qr-track` |
-| `lowBatteryThreshold` | number | 30 | Battery minutes threshold to trigger charging |
-| `pickPlaceTimePerLevel` | number | 20 | Extra ticks per shelf level for pick/place (scissor lift time) |
-| `maxActiveMissions` | number | 8 | Max simultaneous active missions |
-| `robotClearanceMeters` | number | 0.3 | Minimum clearance between robots |
+| `tickMs` | `number` | `100` | Simulated milliseconds per discrete tick |
+| `timeScale` | `number` | `1.0` | Playback speed multiplier (`0.1`–`5.0`) |
+| `missionCount` | `number` | `10` | Number of missions created when clicking **Generate Missions** |
+| `routing` | `"direct"` \| `"a-star"` \| `"reservation-table"` | `"reservation-table"` | Pathfinding and space-time reservation algorithm |
+| `allocator` | `"round-robin"` \| `"nearest-robot"` \| `"least-busy"` \| `"eta-optimal"` | `"nearest-robot"` | Task-to-robot assignment strategy |
+| `collisionAvoidance` | `boolean` | `true` | Enable predictive spacing, yielding, and deadlock recovery |
+| `showRoutes` | `boolean` | `true` | Render active robot route polylines in 3D |
+| `showHeatmap` | `boolean` | `false` | Render aisle congestion heatmap overlay |
+| `showOperationsMap` | `boolean` | `true` | Show the 2D Operations Map HUD |
+| `operationsMapMode` | `"layout"` \| `"traffic"` \| `"missions"` \| `"congestion"` \| `"qr-track"` | `"qr-track"` | Active visualization layer in the 2D Operations Map |
+| `lowBatteryThreshold` | `number` | `15` | Remaining battery minutes threshold that triggers charging dispatch |
+| `pickPlaceTimePerLevel` | `number` | `20` | Additional ticks per vertical shelf tier for scissor-lift extension |
+| `maxActiveMissions` | `number` | `4` | Base limit on simultaneously active missions |
+| `autoScaleActiveMissions` | `boolean` | `true` | Dynamically scale active mission concurrency with fleet size and aisle capacity |
+| `robotClearanceMeters` | `number` | `0.22` | Minimum safety clearance buffer around robot footprints in meters |
+| `aisleLanes` | `AisleLaneConfig[]` | `[]` | Optional per-aisle directional overrides (`one-way-forward`, `one-way-reverse`, `two-way`) |
+| `showYieldBays` | `boolean` | `true` | Render yield-bay markers in the 3D scene |
+| `showLaneGeometry` | `boolean` | `true` | Render navigation graph lanes and QR waypoints |
+| `parkingStrategy` | `"home-slots"` \| `"farthest-free"` \| `"nearest-free"` \| `"least-congested"` \| `"balanced-sides"` | `"home-slots"` | Standby bay selection policy when robots complete work |
+| `returnBoxesToShelf` | `boolean?` | `false` | Operator round-trip mode: return processed boxes from station back to their origin shelf slot |
+| `operatorProcessTicks` | `number?` | `120` | Ticks spent by station operator processing a box before return-to-shelf transport |
+| `juryChargingShowcase` | `boolean?` | `true` | Include a low-battery robot during Jury Demo to showcase autonomous charging dispatch |
 
 ## Mission Types
 
-Missions have a `type` field:
-
 | Type | Description |
 |------|-------------|
-| `pick-and-drop` | Default. Robot drives to source slot, picks box (extending scissor lift per level), drives to target station, places box. Source slot is reserved from creation to completion. |
-| `move-to-point` | Robot drives to a free X/Z position on the warehouse floor. No slot reservation, no pick/place phase. Mission completes when the robot arrives. |
+| `pick-and-drop` | Default fulfillment mission. The source slot is atomically reserved upon creation. An assigned robot travels to the rack access node, elevates its scissor lift to the slot's `levelIndex`, picks the tote, lowers the lift, travels to the target station, and places the tote (with optional operator round-trip back to the shelf when `returnBoxesToShelf` is enabled). |
+| `move-to-point` | Point-to-point navigation mission. The assigned robot travels along the navigation graph to a target `(X, Z)` floor coordinate without slot reservation or lift actuation. |
 
-## Robot Camera Modes
-
-The robot camera is controlled from the Robots tab:
+## Camera Modes
 
 | Mode | Behavior |
 |------|----------|
-| `robot-camera` | First-person view from the robot body, looking forward along its mecanum drive heading |
-| `follow` | Third-person chase camera behind and above the robot |
+| `overview` | Orbiting perspective camera framing the full warehouse floor |
+| `top-down` | Planimetric overhead view for layout and traffic inspection |
+| `aisle` | Low-angle perspective aligned down a picking corridor |
+| `follow` | Third-person chase camera tracking the selected robot |
+| `robot-camera` | First-person view mounted on the selected robot chassis looking along its heading |
+| `lift-closeup` | Close-up inspection camera focused on the selected robot's scissor-lift mechanism |
 
-An active camera indicator displays the current mode, robot ID, and robot state. The "Stop Robot Camera" button returns to the default overview preset.
+## Obstacle Model & Scissor Lift Timing
 
-## Obstacle Model
+Solid collision rectangles are constructed from the scenario geometry:
 
-The collision system builds solid rectangles from scenario geometry. Each type can be toggled:
+- **Rack & Station Solids:** Always active, padded by robot clearance during path planning.
+- **Safety Bollards (`visual.showSafetyBollards`):** Enabled by default at rack ends and station corners.
+- **Dock Bumpers (`visual.showDockDoors`):** Enabled by default along rear dock doors.
+- **Support Columns (`visual.showSupportColumns`):** Disabled by default (`false`) so custom narrow-aisle layouts are not obstructed by fixed structural grids.
 
-| Type | Config toggle | Default | Notes |
-|------|---------------|---------|-------|
-| Rack solids | Always on | — | Clearance-buffered rack row segments |
-| Station solids | Always on | — | Station footprints |
-| Bollards | `visual.showSafetyBollards` | true | Row-end and station-corner bollards |
-| Support columns | `visual.showSupportColumns` | true | Structural columns on a 16m grid. **Disabled by default in the default scenario** because they block many nav graph nodes and cause long detours or stuck robots. |
-| Dock bumpers | `visual.showDockDoors` | true | Loading dock bumpers at warehouse rear |
+When picking or placing at shelf tier `levelIndex` (`0`-based), the scissor lift targets height `bottomShelfHeight + levelIndex * levelHeight` and takes:
 
-## Scissor Lift Level Mapping
-
-The scissor lift extends based on the source slot's `levelIndex` (0-based). Pick/place time formula:
-
-```
+```text
 waitTicks = 60 + levelIndex * pickPlaceTimePerLevel
 ```
-
-The visual lift height targets `bottomShelfHeight + levelIndex * levelHeight`. Higher levels produce longer pick times and taller scissor extension animations.
-
-## Mecanum Drive
-
-Robots use a mecanum-style wheel configuration (holonomic motion). In the simulation, they follow orthogonal nav-graph paths and smoothly rotate toward their heading using `turnSpeedRadPerSecond`. The robot camera first-person view looks along this heading.

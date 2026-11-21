@@ -1,54 +1,121 @@
 # BINO — Warehouse Swarm Lab
 
-### Interactive 3D simulation for warehouse robot coordination
+### Interactive 3D Multi-Agent Simulation for Warehouse Robot Coordination
 
-Design a warehouse, dispatch a fleet of autonomous scissor-lift robots, and examine how missions, traffic, inventory, charging, and parking interact in one browser-based environment.
+[![Live Website](https://img.shields.io/badge/Live_Site-warehouse--swarm--sim.vercel.app-0d9488?style=flat-square)](https://warehouse-swarm-sim.vercel.app/)
+[![Launch Simulator](https://img.shields.io/badge/Launch-3D_Simulator-2563eb?style=flat-square)](https://warehouse-swarm-sim.vercel.app/simulator/)
+[![Jury Demo](https://img.shields.io/badge/Demo-Auto_Jury_Batch-f59e0b?style=flat-square)](https://warehouse-swarm-sim.vercel.app/simulator/?demo=jury)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Three.js](https://img.shields.io/badge/Three.js-r177-000000?style=flat-square&logo=threedotjs&logoColor=white)](https://threejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-7.0-646cff?style=flat-square&logo=vite&logoColor=white)](https://vite.dev/)
+[![Regression Suite](https://img.shields.io/badge/Sim_Tests-76_Scenarios_%2B_13_Stress_Suites-16a34a?style=flat-square)](#verification--quality-assurance)
+
+Design an industrial warehouse layout, dispatch a coordinated fleet of autonomous scissor-lift mobile robots, and inspect how spatial geometry, time-expanded route reservations, shelf-level picking kinematics, station queues, battery management, and standby parking interact in real time inside a browser-based 3D engineering workspace.
 
 Developed by **Nabil ES-SAADI** for the **BINO project for the Capgemini competition**. Created in **June 2026**.
 
-**[Project website](https://warehouse-swarm-sim.vercel.app/)** · **[Launch simulator](https://warehouse-swarm-sim.vercel.app/simulator/)** · **[Start jury demo](https://warehouse-swarm-sim.vercel.app/simulator/?demo=jury)**
+**[Project Website](https://warehouse-swarm-sim.vercel.app/)** · **[Launch 3D Simulator](https://warehouse-swarm-sim.vercel.app/simulator/)** · **[Start Jury Demo](https://warehouse-swarm-sim.vercel.app/simulator/?demo=jury)** · **[Scenario Parameters Reference](docs/SCENARIO_PARAMETERS.md)**
+
+---
 
 ![BINO simulator showing warehouse racks, robot fleets, packing stations, and the operations map](public/images/warehouse-preview.jpg)
 
-*Actual application view. The warehouse layout and fleet configuration are editable.*
+*Actual BINO simulator view showing the 3D warehouse floor, pallet racks, autonomous scissor-lift robot fleet, packing and inbound docks, camera toolbar, and 2D QR-track operations map. All layout and fleet parameters are editable at runtime.*
+
+---
 
 ## Contents
 
 - [Overview](#overview)
-- [Quick start](#quick-start)
-- [Capabilities](#capabilities)
-- [Using the simulator](#using-the-simulator)
-- [Architecture](#architecture)
-- [Verification](#verification)
-- [Deployment](#deployment)
-- [Project resources](#project-resources)
-- [Author and project credit](#author-and-project-credit)
+- [Quick Demo Walkthrough](#quick-demo-walkthrough)
+- [System Capabilities](#system-capabilities)
+- [Default Scenario Configuration](#default-scenario-configuration)
+- [Quick Start & Local Development](#quick-start--local-development)
+- [Using the Simulator Workspace](#using-the-simulator-workspace)
+- [Architecture & Repository Layout](#architecture--repository-layout)
+- [Verification & Quality Assurance](#verification--quality-assurance)
+- [Deployment on Vercel](#deployment-on-vercel)
+- [Project Resources & Media Tooling](#project-resources--media-tooling)
+- [Author and Project Credit](#author-and-project-credit)
+
+---
 
 ## Overview
 
-BINO makes warehouse automation visible and explorable. A mission involves more than reaching a destination: robots must share aisles, reserve inventory, approach different shelf levels, queue at stations, manage battery levels, and return to available standby bays.
+Warehouse automation involves far more than computing a shortest path for a single vehicle. In an active fulfillment floor, autonomous mobile robots (AMRs) must share picking aisles, reserve inventory slots, extend scissor lifts to multi-tier shelf heights, queue cleanly at packing and inbound stations, monitor battery reserves, yield or reroute around opposing traffic, and return to conflict-free standby bays when idle.
 
-The project combines a configurable simulation with a 3D workspace, an operations map, telemetry, and export tools. It supports competition demonstrations, scenario exploration, and technical analysis of the implemented coordination logic.
+**BINO — Warehouse Swarm Lab** makes these coupled operational decisions visible, measurable, and configurable:
 
-The public landing page introduces the project without loading the simulation engine. The full simulator runs at `/simulator/` on the same deployment. Simulation and browser saves run on the client; no application backend or account is required.
+- **Explorable 3D Digital Twin:** Combines procedural warehouse geometry (pallet racks, shelf systems, bin walls, hazard lanes, bollards, dock doors) with a tessellated CAD reference overlay ([`public/models/warehouse-from-step.glb`](public/models/warehouse-from-step.glb)).
+- **Deterministic Multi-Agent Coordination:** Runs a 100 ms discrete-tick simulation engine supporting A* and time-expanded reservation-table routing, directional aisle lanes, predictive collision avoidance, and multi-stage deadlock recovery.
+- **Two-Page Client-Side Architecture:** The public homepage (`/`) introduces the project with zero Three.js bundle overhead; the full interactive simulator runs at `/simulator/` on the same deployment. All simulation logic and browser saves execute locally on the client without requiring a backend server or user account.
 
-### Try the demonstration
+### Quick Demo Walkthrough
 
-1. Open **[Start jury demo](https://warehouse-swarm-sim.vercel.app/simulator/?demo=jury)**. The app loads the warehouse reference and starts a demonstration batch.
-2. Watch routes, lift movement, station queues, and parking in the 3D view.
-3. Select a robot or switch to follow, robot camera, or lift close-up mode.
-4. Review mission progress, throughput, waiting, collisions, and conflicts avoided in the workspace panels.
+1. **Launch the automated demonstration:** Open **[Start Jury Demo](https://warehouse-swarm-sim.vercel.app/simulator/?demo=jury)**. The simulator loads the warehouse reference model and immediately dispatches a coordinated demonstration batch.
+2. **Observe multi-agent dynamics:** Watch robots depart their parking bays, navigate dual-lane picking aisles, elevate their scissor lifts to target shelf tiers, deliver payloads to packing/inbound stations, and dispatch low-battery units to the charging dock.
+3. **Switch camera perspectives:** Select any robot in the 3D scene or use the top camera toolbar to switch between **Overview**, **Top-down**, **Aisle**, **Follow robot**, first-person **Robot camera**, and **Lift close-up** views.
+4. **Inspect live telemetry:** Review mission completion progress, hourly throughput estimates, wait times, physical collision counts, and proactive conflict-avoidance counters across the workspace panels and 2D operations map.
 
-Use **Home** in the simulator header to return to the project introduction. To restart the demonstration, select **Jury Demo** in the command bar.
+> [!TIP]
+> Use **Home** in the simulator header at any time to return to the project introduction page. To restart the automated showcase during a session, click **Jury Demo** in the simulator command bar.
 
-## Quick start
+---
+
+## System Capabilities
+
+| Subsystem | Implemented Engineering Capabilities |
+| --- | --- |
+| **Warehouse Geometry & Layout** | Configurable floor footprint (`width × depth`), rack rows, bays per row, vertical shelf levels, row pitch, picking aisle width, main & cross-aisles, station coordinates, structural columns, safety bollards, dock doors, and aligned `.glb` CAD reference overlays. |
+| **Inventory & Slotting** | Procedural SKU family generation, configurable slot fill rates, hot-SKU and empty-slot distributions, per-row inventory rules, atomic source-slot reservations, and full inventory CSV import/export. |
+| **Autonomous Robot Fleet** | Adjustable fleet size, cruise speed, turn rate, smooth acceleration/deceleration profiles (`m/s²`), chassis footprint, maximum lift height, battery capacity, 4 built-in chassis visuals (`scissor-lift`, `compact-lift`, `stacker-amr`, `tote-carrier`), and custom `.glb` robot model loading. |
+| **Mission Control & Dispatch** | Automated batch generation, manual **Pick and Drop** slot dispatch, manual **Go to Position** (`X/Z`) navigation, configurable active-mission concurrency caps with auto-scaling, and four task allocators (`nearest-robot`, `eta-optimal`, `least-busy`, `round-robin`). |
+| **Traffic & Deadlock Recovery** | Orthogonal navigation graph with dual directional aisle lanes, `direct`, `a-star`, and `reservation-table` routing, yield bays, station approach queues, predictive spacing checks, and automatic replanning/rerouting when corridors congest. |
+| **Scissor Lift & Payload Handling** | Shelf-level-dependent scissor mechanism extension (`bottomShelfHeight + levelIndex × levelHeight`), realistic pick/place duration scaling by tier, payload transport visualization, and optional operator round-trip mode (`returnBoxesToShelf`) where processed totes are returned to storage. |
+| **Charging & Standby Parking** | Continuous battery depletion, configurable low-battery threshold, autonomous charging-dock queuing, queue-aware return suppression (robots take waiting tasks directly instead of returning to park), and 5 parking strategies (`home-slots`, `nearest-free`, `farthest-free`, `least-congested`, `balanced-sides`). |
+| **3D Cameras & 2D Operations Map** | 6 interactive 3D camera presets plus an overlaid 2D Operations Map supporting 5 live diagnostic modes: **QR Track**, **Layout**, **Traffic**, **Missions**, and **Congestion**. |
+| **Analytics & Trace Recording** | Real-time KPIs for mission completion, throughput, average mission time, fleet utilization, travel distance, wait ticks, aisle congestion rankings, physical collision detection, and conflict-avoidance telemetry. |
+| **Multi-Format Exports** | One-click export for **Scenario JSON**, **Inventory CSV**, **Mission Logs**, high-resolution **PNG Screenshots**, **3D Warehouse GLB**, **Gazebo/Ignition SDF**, **Text-to-CAD Prompts**, and recorded **Robot Traces (JSON/CSV)**. |
+
+![Aisle-level view showing QR-track navigation grid, multi-tier storage racks, and mission control sidebar](promo/warehouse-swarm-lab-professional-one-robot-thumbnail.png)
+
+*Aisle-level inspection showing the orthogonal QR-track navigation graph, multi-tier rack slots, and real-time mission dispatch controls.*
+
+---
+
+## Default Scenario Configuration
+
+The baseline scenario is defined in [`src/app/defaultScenario.ts`](src/app/defaultScenario.ts). All parameters below represent **editable starting configuration values**, not static benchmark claims.
+
+| Parameter | Default Value | Notes |
+| --- | --- | --- |
+| **Warehouse footprint** | `84 × 58 m` | Normalized automatically if rack or station geometry exceeds floor bounds |
+| **Storage racks** | `8 rows × 14 bays × 3 levels` | `3.2 m` bay width, `1.3 m` shelf depth, `1.4 m` level height, `7.5 m` row pitch |
+| **Aisle architecture** | `4.2 m` aisle / `6.0 m` main aisle | Cross-aisle inserted every `4` bays (`3.0 m` width); dual directional lanes per aisle |
+| **Inventory fill** | `78%` default fill rate | `9` SKU families (`A14`–`J31`), `15%` hot SKUs, `22%` empty slots |
+| **Robot fleet** | `12` scissor-lift AMRs | Footprint `1.2 × 1.0 × 0.65 m`, max lift reach `4.0 m`, `120 min` battery capacity |
+| **Kinematics** | `2.0 m/s` cruise · `3.0 rad/s` turn | Smooth motion profile with `5.5 m/s²` max acceleration and `6.5 m/s²` max deceleration |
+| **Stations** | `4` operational docks | `Pack A` (`-20, -22`), `Pack B` (`20, -22`), `Inbound` (`0, 22`), `Charging` (`-30, 24`) |
+| **Simulation timing** | `100 ms` tick (`1.0×` time scale) | Adjustable from `0.1×` to `5.0×` speed, or single-stepped tick by tick |
+| **Routing & allocation** | `reservation-table` / `nearest-robot` | `10` missions per default generated batch; auto-scaled active mission concurrency |
+
+> [!NOTE]
+> Geometry normalization automatically expands or centers the floor envelope when user-configured racks and stations require additional clearance. Launching **Jury Demo** applies showcase-specific settings (including a low-battery robot to demonstrate autonomous charging dispatch alongside pick-and-drop missions).
+
+---
+
+## Quick Start & Local Development
 
 ### Prerequisites
 
-- **Node.js:** 20.19+ within Node 20, or 22.12+; Node 24 was used for verification. These requirements follow the installed Vite package.
-- **npm:** use the committed `package-lock.json` for reproducible dependency installation.
-- **Browser:** a modern browser with WebGL support. Hardware acceleration is recommended for 3D rendering.
-- **Optional:** Python for the STEP-to-GLB conversion utility; Playwright Chromium for browser checks.
+- **Node.js:** `20.19+` (within Node 20), `22.12+`, or `24.x` (verified with Node 24, matching Vite 7 engine requirements).
+- **npm:** Use the committed `package-lock.json` via `npm ci` for deterministic dependency installation.
+- **Web Browser:** Any modern browser with **WebGL** support (hardware acceleration recommended for smooth 3D rendering).
+- **Optional Tooling:**
+  - **Python 3** with `numpy` and `trimesh` (only required if converting custom tessellated `.step` CAD files to `.glb`).
+  - **Playwright Chromium** (only required if running the automated headless browser smoke tests).
+
+### Installation & Startup
 
 ```bash
 git clone https://github.com/nabil-stem/warehouse-automated-system-bino.git
@@ -57,166 +124,230 @@ npm ci
 npm run dev
 ```
 
-| Local URL | Purpose |
+Once Vite starts, open any of the local entry routes:
+
+| Local URL | Route Purpose |
 | --- | --- |
-| `http://127.0.0.1:5173/` | Project landing page |
-| `http://127.0.0.1:5173/simulator/` | Interactive simulator |
-| `http://127.0.0.1:5173/simulator/?demo=jury` | Automatic jury demo |
+| `http://127.0.0.1:5173/` | Public BINO project landing page |
+| `http://127.0.0.1:5173/simulator/` | Full interactive 3D warehouse simulator |
+| `http://127.0.0.1:5173/simulator/?demo=jury` | Simulator with automatic Jury Demo startup |
 
-If port 5173 is occupied, use the port printed by Vite.
+*(If port `5173` is already in use, Vite will automatically select and print the next available port.)*
 
-### Available commands
+### Available NPM Commands
 
-| Command | Purpose |
+| Command | Description |
 | --- | --- |
-| `npm run dev` | Start the development server. |
-| `npm run typecheck` | Run strict TypeScript checks. |
-| `npm run build` | Check TypeScript and build both pages into `dist/`. |
-| `npm run preview` | Serve the production build, normally on port 4173. |
-| `npm run test:sim` | Run the headless simulation regression suite. |
-| `npm run test:stress` | Run the instrumented stress scenarios (crowded aisles, single-station load, 40–60 mission batches, charging). |
-| `npm run test:sweep` | Run randomized scenario variations; pass `-- --runs=60 --seed=7` to change size or seed. |
-| `npm run test:browser` | Run the simulator browser smoke checks. |
-| `npm run test:landing` | Verify responsive layouts, metadata, links, simulator entry, and demo startup. |
+| `npm run dev` | Start the local Vite development server on `127.0.0.1`. |
+| `npm run typecheck` | Run strict TypeScript compiler checks (`tsc --noEmit`). |
+| `npm run build` | Typecheck and build both the landing page and simulator into `dist/`. |
+| `npm run preview` | Serve the compiled production build locally (defaults to port `4173`). |
+| `npm run test:sim` | Run the **76-scenario** headless simulation regression suite. |
+| `npm run test:stress` | Run the **13-scenario** instrumented stress harness verifying per-tick physical invariants. |
+| `npm run test:sweep` | Run randomized multi-parameter scenario sweeps (pass `-- --runs=60 --seed=7` to customize). |
+| `npm run test:browser` | Run the **29-check** Playwright simulator browser smoke suite. |
+| `npm run test:landing` | Run responsive viewport (`320`–`1920 px`), metadata, asset-deferral, and E2E navigation checks. |
+| `npm run convert:warehouse-step` | Convert a tessellated STEP CAD file into `public/models/warehouse-from-step.glb`. |
 
-## Capabilities
+---
 
-| System | Implemented capabilities |
+## Using the Simulator Workspace
+
+### Workspace Control Panels
+
+The simulator sidebar is organized into nine specialized engineering panels:
+
+| Panel | Key Controls & Responsibilities |
 | --- | --- |
-| **Warehouse configuration** | Floor dimensions, racks, bays, shelf levels, aisles, cross-aisles, station locations, and visual references. |
-| **Inventory** | SKU families, fill rates, row rules, source-slot reservations, and CSV import/export. |
-| **Robot fleet** | Configurable fleet size, speed, acceleration, dimensions, battery capacity, and optional custom models. |
-| **Mission control** | Generated batches, individual pick-and-drop tasks, point destinations, phase tracking, and queued work. |
-| **Traffic coordination** | A* routes, reservation tables, directional lanes, yielding, station queues, and deadlock recovery. |
-| **Lift and payload** | Shelf-dependent scissor extension, pickup, lowering, transport, placement, and optional operator round trips. |
-| **Charging and parking** | Charging behavior, return-to-standby movement, and assigned parking bays. |
-| **Visualization** | Overview, top-down, aisle, follow, robot camera, lift close-up, and an operations map. |
-| **Analysis** | Congestion, waiting, route efficiency, mission estimates, physical collisions, and recorded traces. |
-| **Exports** | Scenario JSON, inventory CSV, mission logs, PNG screenshots, warehouse GLB, SDF, text-to-CAD prompts, and trace JSON/CSV. |
+| **Operations** | Master simulation playback (Play/Pause, Step, Reset, Jury Demo), time-scale multiplier, and live fleet/warehouse status summary. |
+| **Missions** | Batch mission generator, manual **Pick and Drop** slot selector (filtered by row, shelf level, or SKU), manual **Go to Position** (`X/Z`) dispatcher, active mission queue, and phase progression logs. |
+| **Fleet** | Robot count, kinematics (speed, turn rate, acceleration/deceleration), chassis dimensions, lift reach, battery capacity, visual chassis style, custom `.glb` upload, and robot camera activation. |
+| **Warehouse** | Floor dimensions, rack rows/bays/levels, aisle and cross-aisle widths, station coordinates, architectural toggles (walls, roof, bollards, dock doors, columns), and CAD reference model opacity/scale. |
+| **Inventory** | SKU family definitions, global fill rate, hot-SKU and empty-slot percentages, per-row slotting overrides, and CSV inventory import/export. |
+| **Traffic** | Routing algorithm selection (`reservation-table`, `a-star`, `direct`), task allocator selection, clearance buffer, per-aisle directional lane rules, yield bay visibility, and parking strategy. |
+| **Analytics** | Real-time operational KPIs, mission duration distributions, robot utilization breakdown, and top congested aisle rankings. |
+| **Export** | Browser local-storage save/load, scenario JSON import/export, PNG screenshot capture, 3D `.glb` scene export, `.sdf` simulation export, Text-to-CAD prompt export, and trace downloads. |
+| **Debug** | Navigation graph node/edge inspector, solid obstacle bounding boxes, per-robot state machine telemetry, reservation table inspection, and diagnostic overlays. |
 
-### Default scenario
+### Mission Modes & Lifecycles
 
-These values describe the base configuration in [`src/app/defaultScenario.ts`](src/app/defaultScenario.ts). They are editable settings, not measured performance results.
+1. **Pick and Drop (`pick-and-drop`):**
+   - The source storage slot is atomically reserved when the mission is created so no other mission targets the same tote.
+   - An assigned robot navigates from its current position or standby bay to the rack access node in front of the target bay.
+   - The robot extends its scissor lift to the slot's vertical tier (`levelIndex`), waits for the level-scaled pick duration (`60 + levelIndex × pickPlaceTimePerLevel` ticks), retrieves the box, and lowers the lift before traveling.
+   - The robot navigates to the target station (`Pack A`, `Pack B`, or `Inbound`), queues in the station approach lane if necessary, and places the payload.
+   - **Optional Operator Round-Trip (`returnBoxesToShelf`):** When enabled, an operator processes the box at the station for `operatorProcessTicks` while the robot waits (or handles other work), after which the box is transported back and restored to its original shelf slot.
+2. **Go to Position (`move-to-point`):**
+   - Dispatches a chosen robot (or the best available robot) to an arbitrary free `(X, Z)` coordinate on the warehouse floor without reserving inventory or executing lift cycles.
+   - If new missions remain queued when any mission finishes—or while a robot is returning to standby—the planner can reassign the robot immediately without forcing an unnecessary return trip to the parking depot.
 
-| Parameter | Default |
-| --- | --- |
-| Warehouse footprint | 84 × 58 metres before geometry normalization |
-| Fleet | 12 scissor-lift robots |
-| Racks | 8 rows × 14 bays × 3 shelf levels |
-| Travel speed | 2.0 m/s |
-| Simulation tick | 100 ms |
-| Generated batch size | 10 missions |
-| Routing / assignment | Reservation table / nearest robot |
+### Interpreting Traffic & Safety Metrics
 
-Geometry normalization may adjust the warehouse to fit racks and stations. Jury Demo applies additional demonstration settings, so its batch can differ from the base configuration.
+- **Collisions** measures **detected physical contacts** between robot footprints or solid obstacles.
+- **Conflicts Avoided** counts **proactive coordination events**—such as time-expanded reservation delays, yield-bay pulls, priority pauses, and dynamic reroutes—that prevented a potential overlap before physical contact could occur.
+- A healthy high-density run will frequently record many **Conflicts Avoided** while maintaining **0 Collisions**.
+- *Note on custom layouts:* While the built-in regression and stress suites verify zero-collision execution across 89+ deterministic and randomized scenarios, user-created layouts with extreme obstacle density or zero clearance are not guaranteed to be collision-free. Support columns (`showSupportColumns`) are disabled by default because a dense column grid can overlap narrow user-configured aisles; use the **Debug** panel to inspect navigation graph connectivity when experimenting with structural obstacles.
 
-## Using the simulator
+### Persistence & Custom 3D Models (`.glb` / `.step`)
 
-| Panel | Purpose |
-| --- | --- |
-| **Operations** | Control the run and inspect warehouse state. |
-| **Missions** | Generate tasks, select source slots or point destinations, and follow task phases. |
-| **Fleet** | Configure robots and activate robot camera views. |
-| **Warehouse** | Adjust layout, racks, stations, and visual references. |
-| **Inventory** | Manage SKU families, occupancy, row rules, and CSV files. |
-| **Traffic** | Inspect coordination, queues, and traffic behavior. |
-| **Analytics** | Review operational metrics and mission analysis. |
-| **Export** | Save scenarios and download data or visual artifacts. |
-| **Debug** | Inspect navigation, obstacles, fleet state, and diagnostics. |
-
-**Pick and drop:** a robot travels to a reserved source slot, extends its lift, collects the payload, lowers it, and delivers it to a station. The optional operator round-trip setting returns the payload to its shelf after processing.
-
-**Go to position:** a robot navigates to a chosen X/Z destination. Mission phases report travel and arrival. Robots can accept queued work before returning to standby.
-
-### Reading the metrics
-
-**Collisions** counts detected physical contacts. **Conflicts Avoided** reports avoidance activity. A run can have avoidance events while recording zero physical contacts. Collision-free regression scenarios validate the tested configurations; they do not guarantee every possible user-created layout.
-
-Support columns are disabled by default because dense obstacle configurations can restrict navigation. Use Debug to inspect the graph and obstacle counts when experimenting with layouts.
-
-### Persistence and model files
-
-**Save to Browser** stores scenarios in local storage for the current browser and origin. Download scenario JSON to transfer a scenario or retain a separate copy. Browser saves are not shared cloud storage.
-
-Robot and warehouse reference uploads support `.glb` and `.gltf`. The built-in CAD reference is [`public/models/warehouse-from-step.glb`](public/models/warehouse-from-step.glb). STEP files require conversion before browser use:
+- **Browser-Local Persistence:** Clicking **Save to Browser** persists the current scenario in `localStorage` for the active browser and origin. Because `localStorage` is client-local and not cloud-synced across devices, use **Export Scenario JSON** to share scenarios or commit them to version control.
+- **3D Model Uploads:** Both the robot fleet and warehouse reference overlay accept standard `.glb` and `.gltf` files directly in the browser.
+- **STEP-to-GLB CAD Conversion:** The built-in warehouse reference ([`public/models/warehouse-from-step.glb`](public/models/warehouse-from-step.glb)) was generated from a tessellated STEP assembly. To convert another tessellated `.step` file locally:
 
 ```bash
 python -m pip install numpy trimesh
-python scripts/step_tessellation_to_glb.py Warehouse.step public/models/warehouse-from-step.glb
+python scripts/step_tessellation_to_glb.py path/to/Warehouse.step public/models/warehouse-from-step.glb
 ```
 
-The converter supports tessellated STEP data; consult [its implementation](scripts/step_tessellation_to_glb.py) before using another source model. Reference scale and visibility are available in the Warehouse panel.
+Consult [`scripts/step_tessellation_to_glb.py`](scripts/step_tessellation_to_glb.py) for supported STEP face/triangulation entities.
 
-## Architecture
+---
 
-The application uses **TypeScript**, **Three.js**, and **Vite**. A shared browser simulation controller advances state and coordinates the domain logic; Three.js renders the warehouse and robot fleet.
+## Architecture & Repository Layout
+
+BINO is built with **TypeScript**, **Three.js**, and **Vite** using a clean separation between deterministic domain simulation, application state management, WebGL rendering, and DOM control panels.
 
 ```text
-Scenario and UI controls
-        │
-        ▼
-Application state and simulation tick
-        │
-        ├── Warehouse geometry and navigation graph
-        ├── Mission assignment and traffic coordination
-        ├── Robot movement, lift, battery, and parking state
-        └── Metrics and trace recording
-        │
-        ▼
-Three.js scene · Operations map · Panels · Exports
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    User Interface & Scenario Controls                   │
+│   9 Sidebar Panels · Camera Toolbar · 2D Operations Map · Jury Demo     │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                 Application State & 100 ms Tick Loop                    │
+│        src/main.ts · src/app/appState.ts · validation · persistence     │
+└─────────┬───────────────────┬─────────────────────┬─────────────────────┘
+          │                   │                     │
+          ▼                   ▼                     ▼
+┌───────────────────┐ ┌───────────────────┐ ┌─────────────────────────────┐
+│ Spatial & Graph   │ │ Mission & Traffic │ │ Kinematics & Analytics      │
+│ • warehouseGen    │ │ • missionPlanner  │ │ • robotSimulation           │
+│ • navigationGraph │ │ • reservationTbl  │ │ • scissor-lift & battery    │
+│ • obstacles       │ │ • deadlockRecov   │ │ • metrics & traceRecorder   │
+└─────────┬─────────┘ └─────────┬─────────┘ └──────────────┬──────────────┘
+          │                     │                          │
+          └─────────────────────┼──────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Three.js WebGL Renderer & Exporters                 │
+│   sceneManager · warehouseRenderer · robotRenderer · GLB/SDF/PNG/CSV    │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Path | Responsibility |
-| --- | --- |
-| `index.html`, `src/landing.css` | Public project introduction. |
-| `simulator/index.html`, `src/main.ts` | Simulator entry point and frame loop. |
-| `src/app/` | Defaults, application state, validation, and persistence. |
-| `src/domain/` | Geometry, routing, missions, traffic, metrics, and traces. |
-| `src/render/` | Three.js scene, robot visuals, materials, loading, and exports. |
-| `src/ui/` | Panels, operations map, dashboard, and camera toolbar. |
-| `public/` | Required preview image, favicon, and warehouse model. |
-| `scripts/` | Regression tests, browser checks, diagnostics, CAD conversion, and video tools. |
-| `docs/` | Parameter reference and Claude Code handoff. |
-| `promo/` | Retained demonstration media. |
-| `vite.config.ts` | Two-page production build. |
+### Directory Structure
 
-## Verification
+```text
+warehouse-swarm-sim/
+├── index.html                  # Public landing page entry point (zero Three.js overhead)
+├── simulator/
+│   └── index.html              # Interactive 3D simulator entry point (/simulator/)
+├── vite.config.ts              # Multi-page Vite production build configuration
+├── tsconfig.json               # Strict TypeScript configuration
+├── public/
+│   ├── favicon.svg             # BINO brand icon
+│   ├── images/
+│   │   └── warehouse-preview.jpg
+│   └── models/
+│       └── warehouse-from-step.glb
+├── src/
+│   ├── main.ts                 # Simulator bootstrap, animation loop, and UI wiring
+│   ├── warehouseSpec.ts        # Shared geometry specification helpers
+│   ├── landing.css             # Responsive landing page stylesheet
+│   ├── styles.css              # Simulator workspace stylesheet
+│   ├── app/
+│   │   ├── appState.ts         # Reactive scenario/runtime state container
+│   │   ├── defaultScenario.ts  # Default warehouse, rack, fleet, and simulation settings
+│   │   ├── persistence.ts      # LocalStorage save/load & JSON/CSV serialization
+│   │   └── validation.ts       # Scenario schema and bounds validation
+│   ├── domain/
+│   │   ├── schema.ts           # Core TypeScript types for scenarios, robots, and missions
+│   │   ├── warehouseGenerator.ts # Procedural slot generation & geometry normalization
+│   │   ├── navigationGraph.ts  # Orthogonal nav graph, dual lanes, A* & reservation routing
+│   │   ├── obstacles.ts        # Solid obstacle bounding boxes and clearance envelopes
+│   │   ├── missionPlanner.ts   # Batch generation, task allocators, and concurrency limits
+│   │   ├── robotSimulation.ts  # Per-tick kinematics, traffic yielding, lift, battery & parking
+│   │   ├── metrics.ts          # Operational KPIs, throughput, and congestion calculations
+│   │   └── traceRecorder.ts    # Time-series robot position and state trace recording
+│   ├── render/
+│   │   ├── sceneManager.ts     # Three.js scene, lighting, cameras, raycasting & screenshots
+│   │   ├── warehouseRenderer.ts # Procedural racks, floor, stations, bollards & CAD overlay
+│   │   ├── robotRenderer.ts    # Scissor-lift mechanisms, wheel rotation, masts & payloads
+│   │   ├── loaders.ts          # GLTF/GLB asset loading and normalization
+│   │   ├── materials.ts        # Shared PBR and industrial material definitions
+│   │   ├── labels.ts           # 3D floating badges and slot/station identifiers
+│   │   └── exporters.ts        # GLTFExporter (.glb), Gazebo (.sdf), and CAD prompt builders
+│   └── ui/
+│       ├── operationsPanel.ts  # Playback controls and high-level run status
+│       ├── missionPanel.ts     # Batch/manual dispatch and live mission table
+│       ├── robotPanel.ts       # Fleet sizing, kinematics, and camera controls
+│       ├── layoutPanel.ts      # Warehouse floor, rack, and station editors
+│       ├── inventoryPanel.ts   # SKU families, row rules, and CSV tools
+│       ├── trafficPanel.ts     # Routing, allocator, lane direction, and parking controls
+│       ├── analyticsPanel.ts   # Performance charts and congestion tables
+│       ├── exportPanel.ts      # Scenario, 3D model, trace, and screenshot exports
+│       ├── debugPanel.ts       # Nav-graph, obstacle, and robot state diagnostics
+│       ├── competitionPanel.ts # Jury demo KPI banner and quick-action bar
+│       ├── operationsMap.ts    # 2D canvas HUD overlay (QR Track, Traffic, Congestion)
+│       ├── sceneToolbar.ts     # Floating 3D camera & visibility toolbar
+│       └── dashboard.ts        # Top-level KPI summary cards
+├── scripts/
+│   ├── sim_smoke_test.ts       # 76-scenario headless simulation regression suite
+│   ├── sim_stress_test.ts      # 13-scenario per-tick physical invariant stress harness
+│   ├── sim_sweep_test.ts       # Seeded PRNG multi-parameter robustness sweep
+│   ├── browser_smoke_test.mjs  # 29-check Playwright simulator UI & WebGL smoke suite
+│   ├── landing_smoke_test.mjs  # Multi-viewport landing page & E2E launch verification
+│   ├── step_tessellation_to_glb.py # Python STEP-to-GLB CAD converter
+│   └── create_*_video.mjs      # Playwright automated demonstration video recorders
+├── docs/
+│   ├── SCENARIO_PARAMETERS.md  # Complete WarehouseScenario field-by-field reference
+│   └── CLAUDE_CODE_PROMPT.md   # Implementation and continuation specification
+└── promo/                      # Retained WebM demonstration videos and thumbnails
+```
 
-### Build and simulation
+---
+
+## Verification & Quality Assurance
+
+The repository includes a four-tier automated verification pipeline covering static typing, deterministic simulation regressions, per-tick physical invariants, and headless browser rendering.
+
+### 1. Build & Headless Simulation Regression Suite (`76 Scenarios`)
 
 ```bash
 npm run build
 npm run test:sim
 ```
 
-The build includes strict TypeScript checking. The headless suite contains **76 scenarios** covering missions, shelf access, traffic, startup spacing, collision detection, charging, parking, and payload round trips. It prints JSON results and exits with a nonzero code if a scenario fails.
+- `npm run build` executes strict TypeScript typechecking (`tsc --noEmit`) before bundling both HTML entry points (`/` and `/simulator/`).
+- `npm run test:sim` compiles and runs [`scripts/sim_smoke_test.ts`](scripts/sim_smoke_test.ts), validating **76 deterministic scenarios** across mission assignment, multi-level shelf access, reservation-table routing, startup spacing, collision detection, low-battery charging, standby parking strategies, and operator payload round trips. It outputs structured JSON results and exits with a non-zero status code on any failure.
 
-### Movement and mission stress checks
+### 2. Per-Tick Physical Invariant Stress & Randomized Sweep Suites
 
 ```bash
 npm run test:stress
 npm run test:sweep
 ```
 
-These suites check physical invariants on every simulation tick, not only the final result:
+Unlike end-of-run assertions, [`scripts/sim_stress_test.ts`](scripts/sim_stress_test.ts) and [`scripts/sim_sweep_test.ts`](scripts/sim_sweep_test.ts) verify strict physical and scheduling invariants **on every single 100 ms tick**:
 
-- no robot moves farther in one tick than its top speed allows;
-- no two robot bodies overlap, and no body enters a rack, station, or bollard;
-- no robot on a travel leg stays motionless indefinitely;
-- every mission completes and the whole fleet ends parked.
+- **Velocity bound (zero teleportation):** No robot ever moves farther in a single tick than `speedMetersPerSecond × dt` allows.
+- **Zero body overlap:** No two robot collision footprints overlap, and no robot body penetrates a rack, station, or bollard solid.
+- **Bounded waiting (no deadlocks):** No robot on an active travel leg or return leg remains motionless beyond the stall threshold.
+- **Work-conserving dispatch:** Idle or returning robots with sufficient battery do not ignore assignable queued missions.
+- **Full completion & clean parking:** Every generated or injected mission reaches `done`, and the entire fleet finishes cleanly parked in assigned standby bays (or charging docks).
 
-`test:stress` runs hand-built scenarios (crowded aisles, one overloaded station, 40- and 60-mission batches, low-battery fleets, round trips, continuous injection). `test:sweep` generates reproducible random variations of fleet size, batch size, allocator, routing mode, aisle width, round-trip mode, and battery state.
+`npm run test:stress` executes **13 hand-crafted high-contention scenarios** (crowded single-aisle bursts, 24 missions into a single packing station, 12-robot / 40-mission and 20-robot / 60-mission batches, narrow `3.0 m` aisles, low-battery fleets, continuous mission waves, and operator round trips). `npm run test:sweep` tests **24 seeded random scenario combinations** by default (configurable via `npm run test:sweep -- --runs=60 --seed=7`).
 
-### Browser checks
+### 3. Automated Playwright Browser & Landing Suites
 
-Install the browser runtime once, then keep a development or production-preview server running in another terminal:
+Install the Playwright Chromium runtime once, then start a local production preview server in a background terminal:
 
 ```bash
 npx playwright install chromium
 npm run preview
 ```
 
-For the production preview, run these checks in PowerShell:
+In a second PowerShell terminal, run the browser suites against the production preview:
 
 ```powershell
 $env:TEST_URL = "http://127.0.0.1:4173/simulator/"
@@ -225,46 +356,51 @@ npm run test:browser
 npm run test:landing
 ```
 
-For the deployed site, use the same commands with `https://warehouse-swarm-sim.vercel.app/simulator/` and `https://warehouse-swarm-sim.vercel.app/` respectively. Without overrides, the scripts target the development server on port 5173.
+*(Without environment overrides, the scripts target the Vite dev server on `http://127.0.0.1:5173`. You can also point `TEST_URL` and `LANDING_URL` at `https://warehouse-swarm-sim.vercel.app/simulator/` and `https://warehouse-swarm-sim.vercel.app/` to verify a live deployment.)*
 
-- **Simulator checks:** 29 checks covering rendering, CAD loading, panels, dispatch, cameras, export controls, and the competition demo. Several checks report observed intermediate states rather than assert full mission completion; use the headless suite for simulation regression coverage.
-- **Landing checks:** widths of 320, 390, 768, 1440, and 1920 px; overflow, image loading, metadata, touch targets, anchors, deferred simulator loading, credit, and network/console errors. The flow also verifies simulator launch, direct refresh, CAD loading, Home navigation, and automatic jury-demo startup with zero physical collisions at startup.
+- **Simulator Browser Suite (`npm run test:browser`):** Executes **29 browser checks** covering WebGL canvas initialization, STEP-derived CAD reference loading, sidebar panels, mission dispatch, camera mode switching, export triggers, and Jury Demo execution. *(Note: several browser checks inspect live intermediate UI states during short timeouts; full mission completion is verified by `test:sim` and `test:stress`.)*
+- **Landing & E2E Flow Suite (`npm run test:landing`):** Tests viewport widths of **320, 390, 768, 1440, and 1920 px** for zero horizontal overflow, image loading, OpenGraph/Twitter metadata, `≥ 40 px` touch targets, anchor integrity, deferred Three.js bundle loading on `/`, author credit, direct `/simulator/` refresh, **Home** navigation, and automatic `/simulator/?demo=jury` startup with zero physical collisions and zero console/network errors.
 
-Generated screenshots and `smoke-build-cjs/` are ignored by Git and excluded from production uploads. Browser checks require a working WebGL environment.
+---
 
-## Deployment
+## Deployment on Vercel
 
-Production is hosted on **Vercel** at **[warehouse-swarm-sim.vercel.app](https://warehouse-swarm-sim.vercel.app/)**.
+Production is deployed on **Vercel** at **[https://warehouse-swarm-sim.vercel.app/](https://warehouse-swarm-sim.vercel.app/)**.
 
-| Route | Page |
+| Production Route | Served Application Entry |
 | --- | --- |
-| `/` | BINO project landing page |
-| `/simulator/` | Interactive simulator |
-| `/simulator/?demo=jury` | Automatic jury demo |
+| `/` | Public BINO project landing page (`index.html`) |
+| `/simulator/` | Interactive 3D warehouse simulator (`simulator/index.html`) |
+| `/simulator/?demo=jury` | Interactive simulator with automatic Jury Demo batch launch |
 
-Use the **Vite** framework preset, **`npm run build`** as the build command, and **`dist`** as the output directory. Both HTML entry points must be included; the application does not need a backend or runtime secrets.
+### Vercel Build Configuration
+
+- **Framework Preset:** `Vite`
+- **Build Command:** `npm run build`
+- **Output Directory:** `dist`
+- **Runtime Requirements:** Static client-side bundle; no backend server or environment secrets required.
 
 ```bash
 npx vercel login
 npx vercel --prod
 ```
 
-For an existing local checkout, preserve `.vercel/project.json` to deploy to the associated project. For a fresh clone, select the existing `warehouse-swarm-sim` project when linking. Vercel account files stay out of Git.
+- Preserve `.vercel/project.json` in an existing local checkout to deploy directly to the linked `warehouse-swarm-sim` project (`.vercel` remains untracked by Git).
+- [`.vercelignore`](.vercelignore) excludes local scripts, documentation, and raw promotional recordings from upload while retaining all required static assets in `public/`.
 
-`.vercelignore` excludes documentation, local tools, and promotional media from build uploads. Required website assets belong in `public/`. After deployment, verify both routes, direct refresh, images, model loading, and the jury-demo action.
+---
 
-## Project resources
+## Project Resources & Media Tooling
 
-- [Full scenario parameter reference](docs/SCENARIO_PARAMETERS.md)
-- [Claude Code implementation and continuation prompt](docs/CLAUDE_CODE_PROMPT.md)
-- [Simulation regression suite](scripts/sim_smoke_test.ts)
-- [Simulator browser checks](scripts/browser_smoke_test.mjs)
-- [Landing-page browser checks](scripts/landing_smoke_test.mjs)
-- [Retained swarm demonstration](promo/warehouse-swarm-lab-swarm-promo.webm)
+- **[Scenario Parameters Reference](docs/SCENARIO_PARAMETERS.md)** — Detailed field-by-field documentation of the `WarehouseScenario` schema, obstacle toggles, lift timing formula, and camera modes.
+- **[Claude Code Specification](docs/CLAUDE_CODE_PROMPT.md)** — Architecture and verification handoff reference.
+- **[Headless Regression Suite](scripts/sim_smoke_test.ts)** · **[Stress Invariant Harness](scripts/sim_stress_test.ts)** · **[Randomized Robustness Sweep](scripts/sim_sweep_test.ts)**
+- **[Simulator Browser Smoke Tests](scripts/browser_smoke_test.mjs)** · **[Landing & Responsive Flow Tests](scripts/landing_smoke_test.mjs)**
+- **[Retained Swarm Demonstration Video](promo/warehouse-swarm-lab-swarm-promo.webm)** · **[Single-Robot Mission Video](promo/warehouse-swarm-lab-professional-one-robot.webm)**
 
-Preview and video tools drive the actual simulator with Playwright. Set `PROMO_URL` for the `create_*_video.mjs` scripts or `PREVIEW_URL` for `capture_blue_preview.mjs` when using another server. Their default simulator URL is `http://127.0.0.1:5173/simulator/`; raw recordings belong in the ignored `promo/recordings/` folder.
+---
 
-## Author and project credit
+## Author and Project Credit
 
 I made this simulator for our **BINO project for the Capgemini competition**.
 
