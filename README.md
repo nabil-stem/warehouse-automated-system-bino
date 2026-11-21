@@ -158,21 +158,28 @@ Once Vite starts, open any of the local entry routes:
 
 ## Using the Simulator Workspace
 
+### Command Bar, 3D Overlays & Navigation Shortcuts
+
+- **Top Command Bar:** Provides `← Home` navigation back to the `100vh` landing page, a live tabular **Tick Pill (`T 0`)**, playback controls (**Start/Pause**, **Step**, **Reset**), a continuous speed slider (`0.1×`–`5.0×`) with 1-click preset chips (**`1×`**, **`3×`**, **`5×`**), quick actions (**Generate**, **Jury Demo**, **Screenshot**), and a responsive **`☰ Panels`** drawer toggle on tablet and mobile screens (`≤ 1100 px`).
+- **Categorized Navigation Rail & Shortcuts:** The nine workspace panels are grouped into **Run** (`Operations`, `Missions`, `Fleet`), **Design** (`Warehouse`, `Inventory`, `Traffic`), and **Inspect** (`Analytics`, `Export`, `Debug`). Press keys **`1`–`9`** (when not typing in an input field) to jump directly to any panel. On mobile screens (`≤ 760 px`), the rail automatically docks to a horizontal bottom bar.
+- **Floating View & Layer Toolbar:** Switch between **Overview**, **Top-down**, **Aisle**, **Follow robot**, **Robot camera**, and **Lift close-up** presets, or toggle **Routes**, **QR tracks**, **Heatmap**, **Bays & lanes**, and **CAD reference** overlays.
+- **Interactive 2D Operations Map & Robot Inspector:** Click any robot in the 3D scene, click its dot on the bottom-left **2D Operations Map**, or use the **`R01`–`R04` quick chips** in the bottom-right **Robot Telemetry Inspector** to inspect live battery and scissor-lift extension bars, cycle through robots (`‹` / `›`), or trigger mission trace replay.
+
 ### Workspace Control Panels
 
-The simulator sidebar is organized into nine specialized engineering panels:
+The simulator sidebar is organized into nine specialized engineering panels ( plus a collapsible **Competition Mode** KPI dock at the bottom):
 
-| Panel | Key Controls & Responsibilities |
-| --- | --- |
-| **Operations** | Master simulation playback (Play/Pause, Step, Reset, Jury Demo), time-scale multiplier, and live fleet/warehouse status summary. |
-| **Missions** | Batch mission generator, manual **Pick and Drop** slot selector (filtered by row, shelf level, or SKU), manual **Go to Position** (`X/Z`) dispatcher, active mission queue, and phase progression logs. |
-| **Fleet** | Robot count, kinematics (speed, turn rate, acceleration/deceleration), chassis dimensions, lift reach, battery capacity, visual chassis style, custom `.glb` upload, and robot camera activation. |
-| **Warehouse** | Floor dimensions, rack rows/bays/levels, aisle and cross-aisle widths, station coordinates, architectural toggles (walls, roof, bollards, dock doors, columns), and CAD reference model opacity/scale. |
-| **Inventory** | SKU family definitions, global fill rate, hot-SKU and empty-slot percentages, per-row slotting overrides, and CSV inventory import/export. |
-| **Traffic** | Routing algorithm selection (`reservation-table`, `a-star`, `direct`), task allocator selection, clearance buffer, per-aisle directional lane rules, yield bay visibility, and parking strategy. |
-| **Analytics** | Real-time operational KPIs, mission duration distributions, robot utilization breakdown, and top congested aisle rankings. |
-| **Export** | Browser local-storage save/load, scenario JSON import/export, PNG screenshot capture, 3D `.glb` scene export, `.sdf` simulation export, Text-to-CAD prompt export, and trace downloads. |
-| **Debug** | Navigation graph node/edge inspector, solid obstacle bounding boxes, per-robot state machine telemetry, reservation table inspection, and diagnostic overlays. |
+| Panel | Shortcut | Key Controls & Responsibilities |
+| --- | :---: | --- |
+| **Operations** | `1` | Master batch dispatch, live fleet state pills, active mission cards, and traffic alerts. |
+| **Missions** | `2` | Batch mission generator, manual **Pick and Drop** slot selector (filtered by row, shelf level, or SKU), manual **Go to Position** (`X/Z`) dispatcher, active mission queue, and phase progression logs. |
+| **Fleet** | `3` | Robot count, kinematics (speed, turn rate, acceleration/deceleration), chassis dimensions, lift reach, battery capacity, visual chassis style, custom `.glb` upload, and robot camera activation. |
+| **Warehouse** | `4` | Floor dimensions, rack rows/bays/levels, aisle and cross-aisle widths, station coordinates, architectural toggles (walls, roof, bollards, dock doors, columns), and CAD reference model opacity/scale. |
+| **Inventory** | `5` | SKU family definitions, global fill rate, hot-SKU and empty-slot percentages, per-row slotting overrides, and CSV inventory import/export. |
+| **Traffic** | `6` | Routing algorithm selection (`reservation-table`, `a-star`, `direct`), task allocator selection, clearance buffer, per-aisle directional lane rules, yield bay visibility, and parking strategy. |
+| **Analytics** | `7` | Real-time operational KPIs, mission duration distributions, robot utilization breakdown, and top congested aisle rankings. |
+| **Export** | `8` | Browser local-storage save/load, scenario JSON import/export, PNG screenshot capture, 3D `.glb` scene export, `.sdf` simulation export, Text-to-CAD prompt export, and trace downloads. |
+| **Debug** | `9` | Navigation graph node/edge inspector, solid obstacle bounding boxes, per-robot state machine telemetry, reservation table inspection, and diagnostic overlays. |
 
 ### Mission Modes & Lifecycles
 
