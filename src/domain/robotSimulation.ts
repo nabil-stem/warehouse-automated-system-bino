@@ -517,6 +517,10 @@ export function tickRobots(
   for (const robot of robots) {
     if (robot.state === "idle") {
       robot.liftTelemetry = { targetLevel: 0, currentExtensionPct: 0, activeStages: 0, payloadState: "empty" };
+      if (distance(robot.position, robot.homePosition) <= standbyArrivalTolerance(scenario) * 3) {
+        const turnStep = scenario.robots.turnSpeedRadPerSecond * (scenario.simulation.tickMs / 1000);
+        robot.heading = rotateToward(robot.heading, robot.homeHeading ?? 0, turnStep);
+      }
       const validParking = isRobotInValidParking(robot, robots, scenario);
       if (!validParking && hasQueuedMissions(missions) && robot.waitTicks > 0) {
         robot.waitTicks--;
@@ -3378,7 +3382,8 @@ function dockRobotAtParkingTarget(robot: RobotRuntime, scenario: WarehouseScenar
   }
   robot.position = { ...target };
   if (distance(target, robot.homePosition) <= standbyArrivalTolerance(scenario) * 3) {
-    robot.heading = robot.homeHeading ?? 0;
+    const turnStep = scenario.robots.turnSpeedRadPerSecond * (scenario.simulation.tickMs / 1000);
+    robot.heading = rotateToward(robot.heading, robot.homeHeading ?? 0, turnStep);
   }
   robot.state = "idle";
   robot.path = [];

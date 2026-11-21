@@ -193,6 +193,14 @@ The simulator sidebar is organized into nine specialized engineering panels:
 - A healthy high-density run will frequently record many **Conflicts Avoided** while maintaining **0 Collisions**.
 - *Note on custom layouts:* While the built-in regression and stress suites verify zero-collision execution across 89+ deterministic and randomized scenarios, user-created layouts with extreme obstacle density or zero clearance are not guaranteed to be collision-free. Support columns (`showSupportColumns`) are disabled by default because a dense column grid can overlap narrow user-configured aisles; use the **Debug** panel to inspect navigation graph connectivity when experimenting with structural obstacles.
 
+### Known Scope & Engineering Trade-offs
+
+- **Station Queueing Model:** The charging station enforces a strict single-grant FIFO dock queue (`updateChargerAccess`) where waiting robots hold at marked queue coordinates until the dock is physically clear. Packing and inbound stations retain their capacity-gated approach queue (`queueCapacity`): multiple robots may approach a station concurrently, relying on local reservation and deadlock-recovery rules near the dock.
+- **Heuristic Priority & Watchdog Recovery vs. Global Optimality:** Multi-robot safety is enforced through pairwise clearance checks, time-window reservations, and deterministic priority rules rather than globally optimal multi-agent path finding (MAPF). The progress watchdog guarantees bounded waiting via side-pocket yields and dynamic rerouting, which can introduce detours or brief waits (up to ~50 ticks in tightly packed corners).
+- **Configured Concurrency Throttling:** Robots still return to standby parking while missions remain `queued` whenever the active-mission concurrency cap (`maxActiveMissions` / auto-scaled limit) or a full target station queue blocks immediate assignment. This is intentional admission throttling rather than an assignment bug.
+- **Docking Alignment:** Final bay docking settles position within `0.02 m` (`DOCK_SETTLE_EPS`) and rotates toward `homeHeading` at the robot's configured angular turn rate (`turnSpeedRadPerSecond`).
+- **Validated Layout Envelope:** Automated regression (`test:sim`), stress (`test:stress`), and randomized sweep (`test:sweep`) suites validate the default warehouse layout and its parametric variations; unusual or extreme custom layouts outside standard aisle/clearance envelopes are not formally proven.
+
 ### Persistence & Custom 3D Models (`.glb` / `.step`)
 
 - **Browser-Local Persistence:** Clicking **Save to Browser** persists the current scenario in `localStorage` for the active browser and origin. Because `localStorage` is client-local and not cloud-synced across devices, use **Export Scenario JSON** to share scenarios or commit them to version control.
